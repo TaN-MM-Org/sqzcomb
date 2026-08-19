@@ -10,5 +10,8 @@ license: Apache-2.0
 repository-code: "https://github.com/TaN-MM-Org/sqzcomb"
 identifiers:
   - type: doi
+    value: 10.5281/zenodo.22015375
+    description: "Concept DOI for all versions; resolves to the latest release"
+  - type: doi
     value: 10.5281/zenodo.22015376
     description: "Zenodo archive of v0.1.0"

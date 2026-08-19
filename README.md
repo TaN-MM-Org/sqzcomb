@@ -1,6 +1,6 @@
 # sqzcomb
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22015376-blue)](https://doi.org/10.5281/zenodo.22015376) [![tests](https://github.com/TaN-MM-Org/sqzcomb/actions/workflows/ci.yml/badge.svg)](https://github.com/TaN-MM-Org/sqzcomb/actions)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22015375-blue)](https://doi.org/10.5281/zenodo.22015375) [![tests](https://github.com/TaN-MM-Org/sqzcomb/actions/workflows/ci.yml/badge.svg)](https://github.com/TaN-MM-Org/sqzcomb/actions)
 
 Squeezed light in Kerr microcombs, computed **end to end**: from the
 classical Lugiato-Lefever steady state, through the linearized quantum
