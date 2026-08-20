@@ -1,17 +1,14 @@
-cff-version: 1.2.0
+cff-version: 0.1.1
 message: "If this software is useful in your work, please cite it."
 title: "sqzcomb: Lugiato-Lefever steady states and detected squeezing spectra for Kerr microcombs"
 authors:
   - family-names: Mahim
     given-names: Tanvir M.
     orcid: "https://orcid.org/0000-0002-4550-3248"
-version: 0.1.0
+version: 0.1.1
 license: Apache-2.0
 repository-code: "https://github.com/TaN-MM-Org/sqzcomb"
 identifiers:
   - type: doi
     value: 10.5281/zenodo.22015375
     description: "Concept DOI for all versions; resolves to the latest release"
-  - type: doi
-    value: 10.5281/zenodo.22015376
-    description: "Zenodo archive of v0.1.0"
