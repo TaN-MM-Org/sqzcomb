@@ -11,7 +11,7 @@ the coupling that maximizes one does not maximize the other.
 
 ## Status
 
-v0.2.0 (alpha). Implemented and tested:
+v0.3.0 (alpha). Implemented and tested:
 
 - Lugiato-Lefever solver (Strang splitting; the Kerr step and the
   linear-plus-pump step are each exact)
@@ -24,6 +24,10 @@ v0.2.0 (alpha). Implemented and tested:
   (`photonic_molecule`), per-mode-coupling output spectra
   (`output_variance_ports`), and the exact instability threshold
   (`molecule_threshold`)
+- **multimode comb molecule (new in v0.3)**: every retained comb line of
+  the LLE fluctuation matrix coupled to a matching auxiliary-ring mode
+  (`molecule_fluctuation_matrix`), with multi-line bus detection and
+  joint twin-beam quadratures through the auxiliary ring
 
 Verified against closed forms in the test-suite: vacuum passes a passive
 cavity, and a passive molecule, unchanged for every coupling, port and
@@ -43,10 +47,22 @@ detected squeezing through the auxiliary port although the Kerr ring
 itself has no extraction port, which is the molecule extraction mechanism
 in its simplest form.
 
-Not yet implemented (the v0.3+ roadmap, in order): the multimode comb
-molecule (per-comb-line auxiliary coupling), soliton-crystal steady-state
-continuation, supermode decomposition of the multimode covariance, and
-thermal input noise.
+For the multimode molecule, the asserts continue in the same spirit: at
+one retained line the builder equals the released two-ring matrix to
+machine precision; at zero coupling it reduces exactly to the plain
+fluctuation matrix and the v0.1 spectra, single-line and twin-beam; a
+passive multimode molecule returns exact vacuum through any bus; the
+resonant auxiliary ring at zero frequency is exactly the single ring with
+J^2/gamma_b extra loss per line and the quarter-turn rotation; and when
+J^2/gamma_b exceeds one, twin-beam squeezing detected through the
+auxiliary bus is strictly deeper than through the main bus of the same
+device. The stability guard is also asserted to refuse a flat state that
+is above a pair's modulational-instability threshold once the molecule's
+added loss is removed.
+
+Not yet implemented (the v0.4+ roadmap, in order): soliton-crystal
+steady-state continuation, supermode decomposition of the multimode
+covariance, and thermal input noise.
 
 ## Install and use
 
