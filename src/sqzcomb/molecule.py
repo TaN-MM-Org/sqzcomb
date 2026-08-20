@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .linearize import is_stable
+from .linearize import fluctuation_matrix, is_stable
 
 
 def photonic_molecule(mu, J, delta_a=0.0, delta_b=0.0, gamma=1.0):
@@ -68,17 +68,21 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
                           mode_index=None):
     """Detected quadrature variance with per-mode decay rates.
 
-    One physical port is monitored: it couples to mode `port_mode` and
-    carries the fraction `eta` of that mode's decay `gammas[port_mode]`.
-    Every other decay channel (the remaining 1 - eta of the monitored
-    mode, and the full decay of every other mode) is an independent
-    vacuum bath. Vacuum level is exactly 0.5; the passive case is
-    asserted in the test suite, not assumed.
+    The monitored bus couples to `port_mode` (an int, or a sequence of
+    ints for a bus that extracts several spectrally resolved lines, as
+    in twin-beam detection); each listed mode contributes the fraction
+    `eta` of its own decay `gammas[j]` to the bus. Every other decay
+    channel (the remaining 1 - eta of each monitored mode, and the full
+    decay of every other mode) is an independent vacuum bath. Vacuum
+    level is exactly 0.5; the passive case is asserted in the test
+    suite, not assumed.
 
-    mode_index selects which mode's output quadrature is read (default:
-    the monitored port's mode, the only one a detector on that port can
-    see; the parameter exists for constructing joint quadratures in
-    future multimode work).
+    mode_index selects whose output quadrature is read (default: the
+    monitored modes). An int reads that mode's quadrature; a sequence
+    reads the joint equal-weight quadrature of those modes (for two
+    modes, the twin-beam variable (a + b)/sqrt(2) rotated by phi).
+    Detection must be on monitored modes: a detector on the bus cannot
+    see light that never enters the bus.
     """
     gammas = np.asarray(gammas, dtype=float)
     n = gammas.size
@@ -87,8 +91,14 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     if not is_stable(M):
         raise ValueError("drift matrix is unstable (above threshold); "
                          "linearized spectra are meaningless there")
+    ports = np.atleast_1d(np.asarray(port_mode, dtype=int))
     if mode_index is None:
         mode_index = port_mode
+    reads = np.atleast_1d(np.asarray(mode_index, dtype=int))
+    if not np.all(np.isin(reads, ports)):
+        raise ValueError("mode_index must be one of the monitored port "
+                         "modes; a detector on the bus cannot see light "
+                         "that never enters the bus")
 
     m2 = 2 * n
     ident = np.eye(m2, dtype=complex)
@@ -97,14 +107,14 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     def doubled_diag(amps):
         return np.diag(np.concatenate([amps, amps]).astype(complex))
 
-    # monitored port: amplitude sqrt(2 eta gamma_j) on port_mode only
+    # monitored bus: amplitude sqrt(2 eta gamma_j) on each port mode
     amp_port = np.zeros(n)
-    amp_port[port_mode] = np.sqrt(2.0 * eta * gammas[port_mode])
+    amp_port[ports] = np.sqrt(2.0 * eta * gammas[ports])
     C_port = doubled_diag(amp_port)
 
-    # loss baths: remainder of the monitored mode, full decay of the rest
+    # loss baths: remainder of the monitored modes, full decay of the rest
     amp_loss = np.sqrt(2.0 * gammas)
-    amp_loss[port_mode] = np.sqrt(2.0 * (1.0 - eta) * gammas[port_mode])
+    amp_loss[ports] = np.sqrt(2.0 * (1.0 - eta) * gammas[ports])
     C_loss = doubled_diag(amp_loss)
 
     T_port = C_port @ G @ C_port - ident
@@ -115,9 +125,56 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     S = T_port @ N @ T_port.conj().T + T_loss @ N @ T_loss.conj().T
 
     u = np.zeros(m2, dtype=complex)
-    u[mode_index] = np.exp(-1j * phi) / np.sqrt(2.0)
-    u[n + mode_index] = np.exp(1j * phi) / np.sqrt(2.0)
+    w = 1.0 / np.sqrt(2.0 * reads.size)
+    for idx in reads:
+        u[idx] += np.exp(-1j * phi) * w
+        u[n + idx] += np.exp(1j * phi) * w
     return float(np.real(u.conj() @ S @ u))
+
+
+def molecule_fluctuation_matrix(psi_s, alpha, J, gamma_b, dispersion=(0.0,),
+                                aux_delta=0.0, modes=None):
+    """Multimode comb molecule: LLE fluctuations + per-line auxiliary modes.
+
+    Every retained comb line k of the main ring (linearized around the
+    steady state psi_s exactly as in `fluctuation_matrix`) is coupled
+    with rate J to a matching passive mode of an auxiliary ring with
+    amplitude decay gamma_b and detuning aux_delta (scalar, or an array
+    over the retained modes to encode the auxiliary ring's own detuning
+    and dispersion). Valid when the auxiliary ring's free spectral range
+    matches the main ring's, so line k couples only to auxiliary mode k.
+
+    Basis ordering: (a_k1..a_kM, b_k1..b_kM, a*_k1.., b*_k1..), i.e. the
+    joint mode list is the main lines followed by the auxiliary lines,
+    then the conjugates, which is the ordering `output_variance_ports`
+    expects. Returns (M, gammas, modes) with gammas = (1, ..., 1,
+    gamma_b, ..., gamma_b) and modes the retained mode numbers; the
+    auxiliary line for main index i sits at joint index M + i.
+
+    J may be a scalar or an array over the retained modes (per-line
+    coupling). At a single retained line this construction reduces
+    exactly to `photonic_molecule` with mu = i psi_s^2, which the test
+    suite asserts against the released two-ring code.
+    """
+    if gamma_b <= 0.0:
+        raise ValueError("gamma_b must be positive")
+    M_main, modes = fluctuation_matrix(psi_s, alpha, dispersion, modes)
+    m = modes.size
+    A_main = M_main[:m, :m]
+    B_main = M_main[:m, m:]
+
+    Jk = np.broadcast_to(np.asarray(J, dtype=float), (m,))
+    dk = np.broadcast_to(np.asarray(aux_delta, dtype=float), (m,))
+    A_aux = np.diag(-float(gamma_b) + 1j * dk)
+    C = np.diag(-1j * Jk).astype(complex)
+
+    zero = np.zeros((m, m), dtype=complex)
+    A_joint = np.block([[A_main, C], [C, A_aux]])
+    B_joint = np.block([[B_main, zero], [zero, zero]])
+    M = np.block([[A_joint, B_joint],
+                  [np.conj(B_joint), np.conj(A_joint)]])
+    gammas = np.concatenate([np.ones(m), np.full(m, float(gamma_b))])
+    return M, gammas, modes
 
 
 def molecule_threshold(J, gamma):

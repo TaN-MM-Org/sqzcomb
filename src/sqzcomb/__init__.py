@@ -12,14 +12,15 @@ microcombs with a photonic molecule" (under review).
 """
 from .lle import lle_evolve, homogeneous_steady_states
 from .linearize import fluctuation_matrix, single_mode_parametric
-from .molecule import (molecule_threshold, output_variance_ports,
-                       photonic_molecule)
+from .molecule import (molecule_fluctuation_matrix, molecule_threshold,
+                       output_variance_ports, photonic_molecule)
 from .spectra import output_quadrature_variance, squeezing_db
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
     "photonic_molecule", "output_variance_ports", "molecule_threshold",
+    "molecule_fluctuation_matrix",
     "output_quadrature_variance", "squeezing_db",
 ]
