@@ -11,7 +11,7 @@ the coupling that maximizes one does not maximize the other.
 
 ## Status
 
-v0.1.1 (alpha). Implemented and tested:
+v0.2.0 (alpha). Implemented and tested:
 
 - Lugiato-Lefever solver (Strang splitting; the Kerr step and the
   linear-plus-pump step are each exact)
@@ -20,18 +20,33 @@ v0.1.1 (alpha). Implemented and tested:
   state, with a stability guard that refuses above-threshold states
 - input-output quadrature spectra with an extraction port and intrinsic
   loss; single-mode and joint two-mode quadratures
+- **photonic molecule (new in v0.2)**: the two-ring coupled-mode model
+  (`photonic_molecule`), per-mode-coupling output spectra
+  (`output_variance_ports`), and the exact instability threshold
+  (`molecule_threshold`)
 
 Verified against closed forms in the test-suite: vacuum passes a passive
-cavity unchanged for every coupling and frequency; the degenerate
-parametric oscillator output spectrum is reproduced to 1e-10; and the
-textbook result that detectable squeezing saturates at 3 dB at critical
-coupling, while full extraction breaks that limit, emerges from the
-machinery rather than being asserted.
+cavity, and a passive molecule, unchanged for every coupling, port and
+frequency; the degenerate parametric oscillator output spectrum is
+reproduced to 1e-10; and the textbook result that detectable squeezing
+saturates at 3 dB at critical coupling, while full extraction breaks that
+limit, emerges from the machinery rather than being asserted.
 
-Not yet implemented (the v0.2+ roadmap, in order): the auxiliary-ring
-photonic molecule and its Purcell extraction of below-threshold modes,
-soliton-crystal steady-state continuation, supermode decomposition of the
-multimode covariance, and thermal input noise.
+For the molecule, the test-suite additionally asserts: exact reduction to
+the single ring at zero coupling; passive supermodes split by exactly 2J;
+the resonant threshold mu = 1 + J^2/gamma (static branch, Hopf branch
+1 + gamma beyond J = gamma); the quarter-turn quadrature rotation of the
+-iJ hop; the exact zero-frequency equivalence of the auxiliary-ring port
+to an effective single mode with escape efficiency
+(J^2/gamma)/(1 + J^2/gamma); and a J^2/gamma = 3 molecule reaching 6 dB
+detected squeezing through the auxiliary port although the Kerr ring
+itself has no extraction port, which is the molecule extraction mechanism
+in its simplest form.
+
+Not yet implemented (the v0.3+ roadmap, in order): the multimode comb
+molecule (per-comb-line auxiliary coupling), soliton-crystal steady-state
+continuation, supermode decomposition of the multimode covariance, and
+thermal input noise.
 
 ## Install and use
 
@@ -68,8 +83,9 @@ eta = kappa_ex / kappa, vacuum variance 1/2.
 > https://github.com/Tanvir-Mahmud-Mahim/sic-molecule-squeezer
 
 This package is the general-purpose engine; the paper repository
-reproduces the specific published study, including the photonic-molecule
-extraction that this package's v0.1 does not yet contain.
+reproduces the specific published study. v0.2 adds the two-mode photonic
+molecule, the extraction mechanism in its simplest form; the paper's full
+multimode comb molecule remains in the paper repository.
 
 ## License
 

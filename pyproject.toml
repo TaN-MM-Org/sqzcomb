@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sqzcomb"
-version = "0.1.1"
+version = "0.2.0"
 description = "Squeezed light in Kerr microcombs: Lugiato-Lefever steady states, linearized quantum noise, and detected output spectra"
 readme = "README.md"
 license = { text = "Apache-2.0" }
