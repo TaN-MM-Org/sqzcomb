@@ -14,7 +14,7 @@ from .lle import lle_evolve, homogeneous_steady_states
 from .linearize import fluctuation_matrix, single_mode_parametric
 from .spectra import output_quadrature_variance, squeezing_db
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
