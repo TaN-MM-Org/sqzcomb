@@ -1,6 +1,6 @@
 # sqzcomb
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22015375-blue)](https://doi.org/10.5281/zenodo.22015375) [![tests](https://github.com/TaN-MM-Org/sqzcomb/actions/workflows/ci.yml/badge.svg)](https://github.com/TaN-MM-Org/sqzcomb/actions)
+[![PyPI](https://img.shields.io/pypi/v/sqzcomb)](https://pypi.org/project/sqzcomb/) [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22015375-blue)](https://doi.org/10.5281/zenodo.22015375) [![tests](https://github.com/TaN-MM-Org/sqzcomb/actions/workflows/ci.yml/badge.svg)](https://github.com/TaN-MM-Org/sqzcomb/actions)
 
 Squeezed light in Kerr microcombs, computed **end to end**: from the
 classical Lugiato-Lefever steady state, through the linearized quantum
@@ -36,8 +36,10 @@ multimode covariance, and thermal input noise.
 ## Install and use
 
 ```
-pip install -e .
+pip install sqzcomb
 ```
+
+For development, clone the repository and `pip install -e .[test]`.
 
 ```python
 import numpy as np
