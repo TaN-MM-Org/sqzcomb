@@ -11,7 +11,7 @@ the coupling that maximizes one does not maximize the other.
 
 ## Status
 
-v0.1.0 (alpha). Implemented and tested:
+v0.1.1 (alpha). Implemented and tested:
 
 - Lugiato-Lefever solver (Strang splitting; the Kerr step and the
   linear-plus-pump step are each exact)
