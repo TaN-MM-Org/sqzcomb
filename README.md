@@ -11,7 +11,7 @@ the coupling that maximizes one does not maximize the other.
 
 ## Status
 
-v0.3.0 (alpha). Implemented and tested:
+v0.4.0 (alpha). Implemented and tested:
 
 - Lugiato-Lefever solver (Strang splitting; the Kerr step and the
   linear-plus-pump step are each exact)
@@ -28,6 +28,17 @@ v0.3.0 (alpha). Implemented and tested:
   the LLE fluctuation matrix coupled to a matching auxiliary-ring mode
   (`molecule_fluctuation_matrix`), with multi-line bus detection and
   joint twin-beam quadratures through the auxiliary ring
+- **Gaussian-state interop (new in v0.4)**: steady-state covariance
+  matrices of the intracavity Gaussian state (`intracavity_covariance`,
+  numpy-only Lyapunov solve), export in the standard xxpp quadrature
+  ordering with an explicit hbar convention (`covariance_xxpp`, vacuum
+  exactly the identity at hbar = 2), Williamson symplectic spectra
+  (`symplectic_eigenvalues`), and a QuTiP adapter (`drift_from_qutip`)
+  that turns any quadratic QuTiP Hamiltonian into a drift matrix this
+  package's spectra machinery accepts, refusing non-quadratic
+  Hamiltonians rather than silently linearizing them. Install
+  `sqzcomb[interop]` for the adapter; its test asserts that the released
+  two-ring molecule is reproduced exactly from a QuTiP Hamiltonian.
 
 Verified against closed forms in the test-suite: vacuum passes a passive
 cavity, and a passive molecule, unchanged for every coupling, port and

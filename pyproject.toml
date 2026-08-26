@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sqzcomb"
-version = "0.3.0"
+version = "0.4.0"
 description = "Squeezed light in Kerr microcombs: Lugiato-Lefever steady states, linearized quantum noise, and detected output spectra"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -22,6 +22,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+interop = ["qutip>=4.7"]
 
 [project.urls]
 Homepage = "https://tanvir-mahmud-mahim.github.io/software/"
