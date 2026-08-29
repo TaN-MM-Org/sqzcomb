@@ -102,6 +102,29 @@ print(squeezing_db(v), "dB relative to vacuum")
 Units are the standard normalized LLE units: time in photon lifetimes,
 eta = kappa_ex / kappa, vacuum variance 1/2.
 
+## Imperfect detection (new in v0.5)
+
+Every spectrum above is the noise at the extraction port; the
+photodiodes report less. `detection` applies the standard beamsplitter
+model of optical loss and quantum efficiency plus additive electronic
+noise, in both languages the package speaks: as a scalar map on
+quadrature variances (`detected_variance`, `detected_squeezing_db`,
+with `dark_from_clearance_db` converting a receiver's dark clearance
+in dB into a variance) and as the lossy Gaussian channel on xxpp
+covariance matrices (`lossy_channel_xxpp`, per-mode efficiencies
+allowed). `required_efficiency` inverts the loss model into the number
+an experiment plans around: the minimum efficiency that still delivers
+a target squeezing from a given source. Loss stages compose by
+multiplying efficiencies, and the test suite asserts that composition
+exactly, along with the vacuum fixed point, physicality of the channel
+(symplectic eigenvalues never fall below hbar/2), and agreement of the
+scalar and matrix forms on a squeezed mode.
+
+References: the beamsplitter model of detector inefficiency,
+U. Leonhardt, Measuring the Quantum State of Light (Cambridge, 1997);
+the Gaussian lossy channel, C. Weedbrook et al., Rev. Mod. Phys. 84,
+621 (2012).
+
 ## Methodological basis
 
 > T. M. Mahim, M. M. Rahman and A. S. M. Mohsin, "Overcoming the 3 dB
