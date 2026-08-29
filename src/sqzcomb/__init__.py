@@ -15,10 +15,13 @@ from .linearize import fluctuation_matrix, single_mode_parametric
 from .molecule import (molecule_fluctuation_matrix, molecule_threshold,
                        output_variance_ports, photonic_molecule)
 from .spectra import output_quadrature_variance, squeezing_db
+from .detection import (dark_from_clearance_db, detected_squeezing_db,
+                        detected_variance, lossy_channel_xxpp,
+                        required_efficiency, required_efficiency_db)
 from .gaussian import (covariance_xxpp, drift_from_qutip,
                        intracavity_covariance, symplectic_eigenvalues)
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -27,4 +30,6 @@ __all__ = [
     "output_quadrature_variance", "squeezing_db",
     "intracavity_covariance", "covariance_xxpp",
     "symplectic_eigenvalues", "drift_from_qutip",
+    "detected_variance", "detected_squeezing_db", "dark_from_clearance_db",
+    "lossy_channel_xxpp", "required_efficiency", "required_efficiency_db",
 ]
