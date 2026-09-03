@@ -153,7 +153,8 @@ the Gaussian lossy channel, C. Weedbrook et al., Rev. Mod. Phys. 84,
 
 > T. M. Mahim, M. M. Rahman and A. S. M. Mohsin, "Overcoming the 3 dB
 > squeezing extraction limit in silicon carbide microcombs with a
-> photonic molecule" (under review); code for the paper:
+> photonic molecule," Optics Express 34(18), 34822-34834 (2026),
+> https://doi.org/10.1364/OE.612248 (open access); code for the paper:
 > https://github.com/Tanvir-Mahmud-Mahim/sic-molecule-squeezer
 
 This package is the general-purpose engine; the paper repository
