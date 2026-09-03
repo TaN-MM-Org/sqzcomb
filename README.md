@@ -32,7 +32,7 @@ print(entanglement_report(sigma, 0, 1))
 
 ## Status
 
-v0.4.0 (alpha). Implemented and tested:
+v0.6.0 (alpha). Implemented and tested:
 
 - Lugiato-Lefever solver (Strang splitting; the Kerr step and the
   linear-plus-pump step are each exact)
@@ -92,7 +92,10 @@ device. The stability guard is also asserted to refuse a flat state that
 is above a pair's modulational-instability threshold once the molecule's
 added loss is removed.
 
-Not yet implemented (the v0.4+ roadmap, in order): soliton-crystal
+Later releases are documented in their own sections below: imperfect
+detection (v0.5) and two-mode Gaussian entanglement of the comb (v0.6).
+
+Not yet implemented (the roadmap, in order): soliton-crystal
 steady-state continuation, supermode decomposition of the multimode
 covariance, and thermal input noise.
 
