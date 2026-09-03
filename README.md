@@ -9,6 +9,27 @@ homodyne detector would report**. The package exists because intracavity
 squeezing is not the observable; what leaves the extraction port is, and
 the coupling that maximizes one does not maximize the other.
 
+## Entanglement of the comb (new in v0.6)
+
+The `entangle` module quantifies twin-beam entanglement directly from the
+covariance matrices the package produces: the partial-transpose symplectic
+eigenvalue through the Simon invariants (necessary and sufficient for
+two-mode Gaussian states), the logarithmic negativity, and the symmetric
+Duan-Simon EPR sum with its separability bound. The invariant formula is
+cross-checked against an independent explicit-partial-transpose
+computation, against the closed-form two-mode squeezed vacuum (E_N = 2r
+exactly), and on the driven photonic molecule, whose two rings turn out to
+be PPT-entangled below threshold while the symmetric Duan sum misses it,
+a working demonstration of why the sharper criterion matters.
+
+```python
+from sqzcomb import (photonic_molecule, intracavity_covariance,
+                     covariance_xxpp, entanglement_report)
+M, gammas = photonic_molecule(mu=0.8, J=1.0)
+sigma = covariance_xxpp(intracavity_covariance(M, gammas))
+print(entanglement_report(sigma, 0, 1))
+```
+
 ## Status
 
 v0.4.0 (alpha). Implemented and tested:
