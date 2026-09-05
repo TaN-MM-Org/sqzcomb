@@ -32,7 +32,7 @@ print(entanglement_report(sigma, 0, 1))
 
 ## Status
 
-v0.6.0 (alpha). Implemented and tested:
+v0.7.0 (alpha). Implemented and tested (66 tests, Python 3.9-3.13):
 
 - Lugiato-Lefever solver (Strang splitting; the Kerr step and the
   linear-plus-pump step are each exact)
@@ -93,11 +93,21 @@ is above a pair's modulational-instability threshold once the molecule's
 added loss is removed.
 
 Later releases are documented in their own sections below: imperfect
-detection (v0.5) and two-mode Gaussian entanglement of the comb (v0.6).
+detection (v0.5), two-mode Gaussian entanglement of the comb (v0.6),
+and solitons, supermodes and thermal baths (v0.7).
 
-Not yet implemented (the roadmap, in order): soliton-crystal
-steady-state continuation, supermode decomposition of the multimode
-covariance, and thermal input noise.
+Every item of the original roadmap is now implemented. Deliberate
+scope, stated plainly -- designed-out, not overlooked: quantum noise
+beyond the Gaussian linearization (no non-Gaussian states, no
+above-threshold dynamics -- unstable and marginal drift matrices are
+refused or must be explicitly acknowledged, never silently averaged);
+technical noise of the resonator itself (thermorefractive and Raman
+noise are material physics with their own modelling choices); and
+pulsed or synchronously pumped operation (the pump here is CW). The
+maximally informative multimode decomposition for *pure* states
+(Bloch-Messiah) is likewise out; `principal_quadratures` answers the
+question experiments ask -- the deepest collective squeezing and its
+supermode -- exactly, for pure and mixed states alike.
 
 ## Install and use
 
@@ -148,6 +158,47 @@ References: the beamsplitter model of detector inefficiency,
 U. Leonhardt, Measuring the Quantum State of Light (Cambridge, 1997);
 the Gaussian lossy channel, C. Weedbrook et al., Rev. Mod. Phys. 84,
 621 (2012).
+
+## Solitons, supermodes and thermal baths (new in v0.7)
+
+The `soliton` module finds *localized* steady states -- dissipative
+Kerr solitons and soliton crystals -- by Newton's method in Fourier
+space (`newton_state`, seeded by `soliton_seed`, swept by
+`continuation`). The Jacobian it inverts is the same linearization the
+quantum-noise machinery builds, in its exact discrete form, so the
+solver refuses to return anything whose stationary residual is not
+verified below tolerance. The test suite then closes the loop through
+independent code paths: the converged soliton barely moves under the
+split-step time evolver, its background matches the exact cubic root,
+its linearization carries the *exact* translation (Goldstone) zero
+mode with eigenvector d psi / d theta, and a two-pulse crystal equals,
+grid point for grid point, the single soliton of the equation with
+dispersion scaled by four -- the exact rescaling of the periodic
+domain. Because the Goldstone mode makes a soliton's drift matrix
+marginally rather than asymptotically stable, the spectra now
+distinguish the two: a marginal matrix is refused with an explanation
+unless `allow_marginal=True` says the translation mode is understood,
+while a genuinely unstable one stays refused regardless.
+
+`principal_quadratures` adds the supermode decomposition of any
+multimode covariance matrix: the eigendecomposition of sigma, whose
+smallest eigenvalue is -- exactly, by linear algebra -- the deepest
+squeezing any generalized quadrature of the state attains, and whose
+eigenvector is the supermode carrying it. The two-mode squeezed vacuum
+pins it in closed form ((hbar/2) e^{-/+ 2r} with EPR supermodes), and
+it is deliberately distinct from the Williamson spectrum, which
+measures mixedness, not squeezing.
+
+Thermal input noise completes the bath model: `output_quadrature_variance`
+takes Bose occupations for the extraction-port and loss baths, and
+`intracavity_covariance` for each mode's bath, with `thermal_occupation`
+supplying the physical number from the exact SI constants (h and k_B
+are exact by definition since the 2019 redefinition). The anchors are
+closed forms: a passive cavity with baths at n_bar emits exactly
+(2 n_bar + 1)/2 at every frequency, coupling and phase; the parametric
+oscillator's spectra scale by exactly (2 n_bar + 1); a passive mode
+holds exactly n_bar photons; and the hot-loss/cold-port mixture matches
+its hand-derived form.
 
 ## Methodological basis
 
