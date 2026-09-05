@@ -19,8 +19,9 @@ Conventions, stated once and tested rather than assumed:
 * Doubled basis z = (a_1..a_n, a*_1..a*_n); dz/dt = M z + inputs, with
   mode j carrying amplitude decay gamma_j (total input coupling
   sqrt(2 gamma_j), as everywhere in this package).
-* Vacuum input: <z_in(t) z_in(t')^dag> = N delta(t - t'), N = [[I, 0],
-  [0, 0]]; hence the diffusion matrix D = [[2 Gamma, 0], [0, 0]].
+* Bath input: <z_in(t) z_in(t')^dag> = N delta(t - t') with N =
+  [[(n_th + 1) I, 0], [0, n_th I]] (vacuum: n_th = 0); hence the
+  diffusion matrix D = [[2 Gamma (n_th + 1), 0], [0, 2 Gamma n_th]].
 * Steady covariance V = <z z^dag> solves M V + V M^dag + D = 0 (solved
   here with numpy alone via the Kronecker-vectorized linear system).
 * Quadratures x = (a + a^dag)/sqrt(2), p = -i (a - a^dag)/sqrt(2);
@@ -39,19 +40,27 @@ from __future__ import annotations
 import numpy as np
 
 
-def _diffusion(gammas):
+def _diffusion(gammas, n_th=0.0):
     gammas = np.asarray(gammas, dtype=float)
     n = gammas.size
+    nb = np.broadcast_to(np.asarray(n_th, dtype=float), (n,))
+    if np.any(nb < 0.0):
+        raise ValueError("thermal occupations must be non-negative")
     D = np.zeros((2 * n, 2 * n), dtype=complex)
-    D[:n, :n] = 2.0 * np.diag(gammas)
+    D[:n, :n] = 2.0 * np.diag(gammas * (nb + 1.0))
+    D[n:, n:] = 2.0 * np.diag(gammas * nb)
     return D
 
 
-def intracavity_covariance(M, gammas):
+def intracavity_covariance(M, gammas, n_th=0.0):
     """Steady-state complex covariance V = <z z^dag> of the doubled basis.
 
-    Solves M V + V M^dag + D = 0 with the vacuum-input diffusion matrix
-    D = diag(2 gamma, 0). Requires a stable M (all drift eigenvalues in
+    Solves M V + V M^dag + D = 0 with the bath diffusion matrix
+    D = diag(2 gamma (n_th + 1), 2 gamma n_th) -- vacuum baths for the
+    default n_th = 0, a Bose occupation per bath otherwise (scalar or
+    one value per mode; see `thermal_occupation` for the physical
+    number). A passive mode then holds exactly <a^dag a> = n_th, which
+    the tests assert. Requires a stable M (all drift eigenvalues in
     the open left half-plane); raises ValueError otherwise, for the same
     reason the spectra do: the linearized state does not exist above
     threshold.
@@ -67,7 +76,7 @@ def intracavity_covariance(M, gammas):
     gammas = np.asarray(gammas, dtype=float)
     if gammas.shape != (n,):
         raise ValueError("gammas must have one decay rate per mode")
-    D = _diffusion(gammas)
+    D = _diffusion(gammas, n_th)
     ident = np.eye(m2, dtype=complex)
     # row-major vec: vec(M V) = (M kron I) vec(V); vec(V M^dag) =
     # (I kron conj(M)) vec(V)
@@ -200,3 +209,45 @@ def drift_from_qutip(H, gammas):
     B = -1j * G
     M = np.block([[A, B], [np.conj(B), np.conj(A)]])
     return M, gammas
+
+
+def principal_quadratures(sigma, hbar=2.0):
+    """Supermode decomposition of a multimode covariance matrix: the
+    principal quadratures and their variances.
+
+    For any real unit vector u, the generalized quadrature u . r
+    (r = (x_1..x_n, p_1..p_n)) has variance u^T sigma u, so the
+    eigendecomposition of sigma answers, exactly and completely, the
+    question "what is the most squeezed collective quadrature this
+    state contains, and along which mode combination does it lie" --
+    the smallest eigenvalue is the deepest squeezing any generalized
+    quadrature attains, its eigenvector the supermode that carries it.
+    That statement is linear algebra, not approximation, and the tests
+    pin it: the two-mode squeezed vacuum yields the exact pairs
+    (hbar/2) e^{-2r} and (hbar/2) e^{+2r} with the EPR combinations
+    (x_1 -/+ x_2)/sqrt(2), (p_1 +/- p_2)/sqrt(2) as supermodes, vacuum
+    yields hbar/2 in every direction, and on the photonic molecule the
+    principal variance is verified to lower-bound every tested
+    twin-beam quadrature.
+
+    Returns (variances, vectors): eigenvalues ascending, vectors[:, i]
+    the unit xxpp vector of principal quadrature i.
+
+    This is the orthogonal decomposition of the noise ellipsoid --
+    deliberately distinct from the *symplectic* (Williamson)
+    decomposition `symplectic_eigenvalues`, which measures mixedness:
+    a pure squeezed state has all symplectic eigenvalues at hbar/2
+    while its principal variances split as e^{-/+ 2r}. Both views are
+    exported because they answer different questions.
+    """
+    sigma = np.asarray(sigma, dtype=float)
+    m2 = sigma.shape[0]
+    if sigma.shape != (m2, m2) or m2 % 2:
+        raise ValueError("sigma must be a square (2n, 2n) xxpp matrix")
+    if np.abs(sigma - sigma.T).max() > 1e-9 * max(1.0, np.abs(sigma).max()):
+        raise ValueError("sigma must be symmetric")
+    w, v = np.linalg.eigh(0.5 * (sigma + sigma.T))
+    if w[0] < -1e-12 * max(1.0, abs(w[-1])):
+        raise ValueError("sigma is not positive semidefinite; not a "
+                         "covariance matrix")
+    return w, v
