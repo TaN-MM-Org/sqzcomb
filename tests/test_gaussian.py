@@ -111,3 +111,60 @@ def test_qutip_rejects_nonquadratic():
     from sqzcomb.gaussian import drift_from_qutip
     with pytest.raises(ValueError):
         drift_from_qutip(a.dag() ** 2 * a ** 2, np.array([1.0]))
+
+
+# ----------------------------------------------------------------------
+# supermode decomposition (principal quadratures)
+
+def test_principal_quadratures_of_the_two_mode_squeezed_vacuum():
+    """Exact closed form: variances (hbar/2) e^{-/+ 2r}, each twice,
+    with the EPR combinations as supermodes."""
+    from sqzcomb import principal_quadratures
+    r = 0.6
+    ch, sh = np.cosh(2 * r), np.sinh(2 * r)
+    sigma = np.zeros((4, 4))
+    sigma[0, 0] = sigma[1, 1] = sigma[2, 2] = sigma[3, 3] = ch
+    sigma[0, 1] = sigma[1, 0] = sh          # <x1 x2>
+    sigma[2, 3] = sigma[3, 2] = -sh         # <p1 p2>
+    w, v = principal_quadratures(sigma)
+    expect = np.sort([np.exp(-2 * r)] * 2 + [np.exp(2 * r)] * 2)
+    assert np.abs(np.sort(w) - expect).max() < 1e-12
+    # the most-squeezed supermode is an EPR combination: equal and
+    # opposite weights on x1, x2 (or p1, p2)
+    u = v[:, 0]
+    pair = np.sort(np.abs(u))
+    assert np.abs(pair[:2]).max() < 1e-10
+    assert np.abs(pair[2:] - 1.0 / np.sqrt(2.0)).max() < 1e-10
+
+
+def test_principal_quadratures_of_vacuum_are_flat():
+    from sqzcomb import principal_quadratures
+    w, _ = principal_quadratures(np.eye(6))
+    assert np.abs(w - 1.0).max() < 1e-12
+
+
+def test_principal_variance_lower_bounds_every_tested_quadrature():
+    """On the photonic molecule: the smallest eigenvalue of sigma is,
+    by construction, at or below the variance of any generalized
+    quadrature -- checked against a scan of two-mode quadratures."""
+    from sqzcomb import (intracavity_covariance, photonic_molecule,
+                         principal_quadratures)
+    M, gammas = photonic_molecule(mu=0.8, J=1.0)
+    sigma = covariance_xxpp(intracavity_covariance(M, gammas))
+    w, _ = principal_quadratures(sigma)
+    n = sigma.shape[0]
+    rng = np.random.default_rng(5)
+    for _ in range(50):
+        u = rng.normal(size=n)
+        u /= np.linalg.norm(u)
+        assert u @ sigma @ u >= w[0] - 1e-10
+
+
+def test_principal_quadratures_refuse_non_covariances():
+    import pytest
+    from sqzcomb import principal_quadratures
+    with pytest.raises(ValueError):
+        principal_quadratures(np.ones((3, 3)))       # odd dimension
+    bad = -np.eye(4)
+    with pytest.raises(ValueError):
+        principal_quadratures(bad)                   # not PSD
