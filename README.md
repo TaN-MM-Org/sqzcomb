@@ -9,6 +9,23 @@ homodyne detector would report**. The package exists because intracavity
 squeezing is not the observable; what leaves the extraction port is, and
 the coupling that maximizes one does not maximize the other.
 
+## Detected entanglement (new in v0.8)
+
+v0.6 answered "are these two comb lines entangled inside the cavity";
+v0.8 answers the question the detector asks: `output_covariance_xxpp`
+is the full symmetrized covariance of the OUTPUT field at analysis
+frequency omega (vacuum exactly 0.5 I), `output_entanglement` the
+logarithmic negativity a two-line homodyne pair would certify there
+-- frequency-resolved, through the extraction port, the intrinsic
+loss, thermal baths and an optional detection-efficiency channel.
+Anchored to exact identities, not trusted: every quadrature read off
+the matrix equals the independent scalar spectra path to 1e-13; a
+passive cavity outputs exactly ((2 nbar + 1)/2) I at every frequency
+and coupling, hence zero entanglement; for the symmetric twin-beam
+process E_N(omega) equals -ln(2 V_EPR_min(omega)) computed by the
+independent joint-quadrature path; E_N vanishes at large omega and
+never increases under detection loss.
+
 ## Entanglement of the comb (new in v0.6)
 
 The `entangle` module quantifies twin-beam entanglement directly from the
@@ -32,7 +49,7 @@ print(entanglement_report(sigma, 0, 1))
 
 ## Status
 
-v0.7.0 (alpha). Implemented and tested (66 tests, Python 3.9-3.13):
+v0.8.0 (alpha). Implemented and tested (72 tests, Python 3.9-3.13):
 
 - Lugiato-Lefever solver (Strang splitting; the Kerr step and the
   linear-plus-pump step are each exact)

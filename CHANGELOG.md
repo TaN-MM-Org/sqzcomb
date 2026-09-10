@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.8.0 - 2026-09-10
+
+Detected entanglement: the entanglement certified at the OUTPUT, not
+inside the cavity.
+
+- `output_covariance_xxpp`: full symmetrized xxpp covariance of the
+  output field at analysis frequency omega (vacuum 0.5 I), composing
+  the validated input-output spectra with the validated xxpp
+  conversion; every single- and joint-quadrature entry equals the
+  independent `output_quadrature_variance` path to 1e-13 (asserted).
+- `output_entanglement` / `output_entanglement_spectrum`:
+  frequency-resolved logarithmic negativity between output comb
+  lines, with an optional detection-efficiency channel applied
+  through the exact Gaussian lossy map before the PPT test. Anchors:
+  passive thermal outputs are exactly ((2 nbar + 1)/2) I and
+  separable at every frequency and coupling; symmetric twin-beam
+  E_N(omega) = -ln(2 V_EPR_min(omega)) against the independent
+  joint-quadrature spectra path (1e-6, phase-grid limited); E_N -> 0
+  at large omega; detection loss never creates entanglement
+  (monotone, asserted stepwise); above-threshold drift matrices are
+  refused as everywhere else in the package.
+
 Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists. Versions below 1.0 may move the API between minor versions;
