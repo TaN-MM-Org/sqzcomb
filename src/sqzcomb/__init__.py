@@ -14,7 +14,9 @@ from .lle import lle_evolve, homogeneous_steady_states
 from .linearize import fluctuation_matrix, single_mode_parametric
 from .molecule import (molecule_fluctuation_matrix, molecule_threshold,
                        output_variance_ports, photonic_molecule)
-from .spectra import output_quadrature_variance, squeezing_db
+from .spectra import (output_covariance_xxpp, output_entanglement,
+                      output_entanglement_spectrum,
+                      output_quadrature_variance, squeezing_db)
 from .detection import (dark_from_clearance_db, detected_squeezing_db,
                         detected_variance, lossy_channel_xxpp,
                         required_efficiency, required_efficiency_db)
@@ -27,7 +29,7 @@ from .gaussian import (covariance_xxpp, drift_from_qutip,
 from .soliton import continuation, newton_state, soliton_seed
 from .thermal import thermal_occupation
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -35,6 +37,8 @@ __all__ = [
     "molecule_fluctuation_matrix",
     "newton_state", "soliton_seed", "continuation",
     "output_quadrature_variance", "squeezing_db",
+    "output_covariance_xxpp", "output_entanglement",
+    "output_entanglement_spectrum",
     "intracavity_covariance", "covariance_xxpp",
     "symplectic_eigenvalues", "principal_quadratures",
     "thermal_occupation", "drift_from_qutip",
