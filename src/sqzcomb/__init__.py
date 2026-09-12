@@ -28,8 +28,12 @@ from .gaussian import (covariance_xxpp, drift_from_qutip,
                        symplectic_eigenvalues)
 from .soliton import continuation, newton_state, soliton_seed
 from .thermal import thermal_occupation
+from .physical import (RingSpec, intracavity_photons, normalized_detuning,
+                       normalized_dispersion, normalized_frequency,
+                       normalized_pump, physical_frequency, threshold_power)
+from .fitnoise import NoiseFit, fit_noise_spectra, noise_spectrum_db
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -41,7 +45,11 @@ __all__ = [
     "output_entanglement_spectrum",
     "intracavity_covariance", "covariance_xxpp",
     "symplectic_eigenvalues", "principal_quadratures",
-    "thermal_occupation", "drift_from_qutip",
+    "thermal_occupation",
+    "RingSpec", "normalized_pump", "threshold_power",
+    "normalized_detuning", "normalized_dispersion",
+    "normalized_frequency", "physical_frequency", "intracavity_photons",
+    "NoiseFit", "fit_noise_spectra", "noise_spectrum_db", "drift_from_qutip",
     "two_mode_reduction", "ppt_symplectic_eigenvalue",
     "logarithmic_negativity", "duan_epr_sum", "entanglement_report",
     "detected_variance", "detected_squeezing_db", "dark_from_clearance_db",
