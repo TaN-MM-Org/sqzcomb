@@ -217,6 +217,46 @@ oscillator's spectra scale by exactly (2 n_bar + 1); a passive mode
 holds exactly n_bar photons; and the hot-loss/cold-port mixture matches
 its hand-derived form.
 
+## Working from laboratory numbers and measured spectra (new in v0.9)
+
+Everything in the package runs in normalized LLE units; an experiment
+is specified in laboratory quantities. v0.9 adds the exact dictionary
+between the two, and the fit that runs it backwards from data:
+
+- **`RingSpec` + conversion helpers** (`normalized_pump`,
+  `normalized_detuning`, `normalized_dispersion`,
+  `normalized_frequency` / `physical_frequency`, `threshold_power`,
+  `intracavity_photons`): loaded linewidth in Hz, escape efficiency,
+  single-photon Kerr shift, pump wavelength and power in, normalized
+  (F, alpha, d2) and spectrum axes out. The conversions are anchored
+  by identities, not numbers: exact round trips, the derived scaling
+  structure, and `threshold_power` cross-validated through the
+  package's own flat-state cubic (the rho = 1 root appears at the
+  returned power to 1e-10). A `RingSpec` without a `reference` naming
+  where its numbers come from is refused.
+- **`fit_noise_spectra`**: extract (mu, eta, kappa) -- pump parameter,
+  total detection efficiency, cavity linewidth -- from measured
+  homodyne noise spectra in dB relative to shot noise, with
+  uncertainties and an optional dark-noise floor. Identifiability is
+  arithmetic, stated in the docstring: one quadrature is a single
+  Lorentzian (two shape numbers, three unknowns), so the fit requires
+  both quadratures or an independently measured linewidth, and
+  refuses otherwise. An antisqueezed trace systematically below shot
+  noise -- impossible in this model -- is refused too.
+
+```python
+import sqzcomb as sc
+
+ring = sc.RingSpec(kappa_hz=100e6, eta_esc=0.8, g0_hz=10.0,
+                   lambda_pump_m=1.55e-6,
+                   reference="our device, linewidth scan 2026-09")
+F = sc.normalized_pump(ring, power_w=2e-3)
+P_th = sc.threshold_power(ring, alpha=1.0)
+
+fit = sc.fit_noise_spectra(f_hz, sq_db, anti_db, sigma_db=0.1)
+print(fit.mu, fit.eta, fit.kappa_hz, fit.sigma)
+```
+
 ## Methodological basis
 
 > T. M. Mahim, M. M. Rahman and A. S. M. Mohsin, "Overcoming the 3 dB
