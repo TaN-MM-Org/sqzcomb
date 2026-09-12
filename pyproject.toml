@@ -11,7 +11,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Tanvir M. Mahim", email = "tanvir.mahim@bracu.ac.bd" }]
 requires-python = ">=3.9"
 keywords = ["squeezed light", "microcomb", "Kerr", "Lugiato-Lefever", "quantum optics", "homodyne"]
-dependencies = ["numpy>=1.22"]
+dependencies = ["numpy>=1.22", "scipy>=1.10"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",

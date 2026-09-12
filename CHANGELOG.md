@@ -25,6 +25,14 @@ extracts squeezer parameters from measured noise spectra.
   Lorentzian shape numbers, three unknowns) is rejected unless the
   linewidth is supplied; a systematically sub-shot-noise
   antisqueezed trace is rejected as unphysical for this model.
+
+### Changed
+
+- The package now depends on scipy (>= 1.10) alongside numpy: the
+  physical bridge takes hbar and c from `scipy.constants` rather than
+  typing them, and the spectrum fit uses
+  `scipy.optimize.least_squares`. (Every sibling package in the
+  organization already carries this dependency.)
 ## v0.8.0 - 2026-09-10
 
 Detected entanglement: the entanglement certified at the OUTPUT, not
