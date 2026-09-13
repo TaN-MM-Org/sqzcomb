@@ -91,7 +91,13 @@ hbar = 2, vacuum exactly the identity).
 - **Imperfect detection**: the standard beamsplitter loss model and
   additive electronic noise, as scalar maps and as the Gaussian
   channel on covariance matrices; `required_efficiency` inverts it
-  into the number an experiment plans around.
+  into the number an experiment plans around. New in v0.10,
+  local-oscillator **phase noise** -- the limit the 2026 unified
+  variance budget of integrated squeezers identifies once loss is
+  tamed (Dean et al., npj Nanophotonics (2026)) -- via the exact
+  Gaussian-averaged quadrature mixing law (Dwyer 2013; Oelker 2016),
+  with `max_phase_noise` inverting it into the jitter budget a
+  homodyne experiment plans around.
 - **Supermodes**: `principal_quadratures` finds the deepest squeezing
   any generalized quadrature of a multimode state attains, and the
   supermode carrying it -- exactly, by linear algebra, for pure and
@@ -103,7 +109,7 @@ hbar = 2, vacuum exactly the identity).
 
 ## How it is checked
 
-80 tests (Python 3.9-3.13, run in CI on every push), every physics
+85 tests (Python 3.9-3.13, run in CI on every push), every physics
 claim anchored to a closed form, an exact identity, or two
 independent code paths -- never a stored number. Highlights: vacuum
 passes any passive device unchanged at every coupling, port and
@@ -118,9 +124,12 @@ single soliton grid point for grid point; thermal baths pinned to
 definitions; entanglement formulas cross-checked against explicit
 partial transposition and the closed-form two-mode squeezed vacuum;
 lab-unit conversions anchored by exact round trips and by
-`threshold_power` hitting the root of the package's own cubic; and
-the noise-spectrum fit recovering generating parameters with
-Monte-Carlo scatter matching its reported uncertainties.
+`threshold_power` hitting the root of the package's own cubic; the
+noise-spectrum fit recovering generating parameters with Monte-Carlo
+scatter matching its reported uncertainties; and the phase-noise
+closed form held against direct numerical integration over the
+jitter distribution, its exact zero- and infinite-jitter limits, and
+its exact commutation with the loss channel.
 
 ## Honest limits
 

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.10.0 (2026-09-13)
+
+Physics upgrade from the 2026 literature: local-oscillator phase
+noise, the practical limit the unified variance budget of integrated
+squeezers identifies once loss is tamed (D. J. Dean et al.,
+"Practical limits on integrated squeezers", npj Nanophotonics (2026),
+doi:10.1038/s44310-026-00125-5; the mixing law itself is the standard
+one of Dwyer et al., Opt. Express 21, 19047 (2013) and Oelker et al.,
+Optica 3, 682 (2016)).
+
+### Added
+
+- `phase_noise_variance` / `phase_noise_squeezing_db`: the detected
+  quadrature variance under Gaussian local-oscillator phase jitter
+  (plus an optional static offset), via the exact closed-form
+  Gaussian average <cos 2 theta> = exp(-2 sigma^2) of the rotation
+  law V(theta) = V_sq cos^2 + V_anti sin^2. Works on scalars or
+  whole spectra.
+- `max_phase_noise`: the largest RMS jitter that still delivers a
+  target variance -- the phase-noise counterpart of
+  `required_efficiency`, closed-form inverted, refusing targets that
+  are not phase-noise-limited (reachable only by fixing the loss
+  budget) or that phase noise could never worsen a source into.
+
+### Anchors (asserted in `tests/test_phase_noise.py`, not stated)
+
+- The closed form equals direct numerical integration over the
+  Gaussian jitter distribution (two independent code paths) to 1e-10
+  at several jitters and offsets.
+- Exact limits: zero jitter returns the source variance exactly; the
+  static-offset case is the plain rotation law; infinite jitter gives
+  the quadrature-blind (V_sq + V_anti)/2; vacuum is a fixed point at
+  every jitter; degradation is monotone in jitter.
+- The `max_phase_noise` inversion round-trips to 1e-12 and both
+  refusals fire.
+- Composition with the loss channel commutes exactly (both are affine
+  maps sharing the vacuum fixed point), asserted rather than assumed.
+
 ## 0.9.0 (2026-09-12)
 
 Adaptability release: the exact bridge between laboratory ring
