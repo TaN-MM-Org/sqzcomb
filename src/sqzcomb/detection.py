@@ -153,3 +153,100 @@ def required_efficiency_db(target_db, source_db):
     Vt = VACUUM_VARIANCE * 10.0 ** (float(target_db) / 10.0)
     Vs = VACUUM_VARIANCE * 10.0 ** (float(source_db) / 10.0)
     return required_efficiency(Vt, Vs)
+
+
+# ------------------------------------------------------------------
+# Homodyne phase noise (new in v0.10): the limit that dominates once
+# loss is tamed.
+#
+# A homodyne detector projects onto a quadrature set by the local-
+# oscillator phase. A static error theta mixes the antisqueezed
+# quadrature into the measurement,
+#
+#     V(theta) = V_sq cos^2(theta) + V_anti sin^2(theta),
+#
+# exactly (the rotation law of the quadrature variances; S. Dwyer et
+# al., Opt. Express 21, 19047 (2013); E. Oelker et al., Optica 3, 682
+# (2016)). For Gaussian phase jitter of RMS size sigma the average has
+# the closed form
+#
+#     <cos^2 theta> = (1 + exp(-2 sigma^2)) / 2,
+#
+# from the Gaussian characteristic function E[cos 2 theta] =
+# exp(-2 sigma^2) -- anchored in the tests against direct numerical
+# integration over the Gaussian, not trusted. Because V_anti of a
+# near-pure source is at least the inverse of V_sq, phase noise sets a
+# floor on detectable squeezing that tightens as the source improves;
+# the 2026 variance-budget analysis of integrated squeezers reaches
+# the same expression and identifies it as a dominant practical limit
+# (D. J. Dean et al., "Practical limits on integrated squeezers",
+# npj Nanophotonics (2026), doi:10.1038/s44310-026-00125-5).
+
+
+def phase_noise_variance(v_squeezed, v_antisqueezed, theta_rms,
+                         static_offset=0.0):
+    """Detected quadrature variance under local-oscillator phase noise.
+
+    v_squeezed, v_antisqueezed : the two quadrature variances at the
+        detector input (vacuum = 0.5; scalars or arrays, e.g. spectra
+        over frequencies).
+    theta_rms : RMS Gaussian phase jitter (radians).
+    static_offset : optional deterministic phase error (radians),
+        applied on top of the jitter.
+
+    Returns the jitter-averaged measured variance
+    V = V_sq <cos^2(theta0 + theta)> + V_anti <sin^2(theta0 + theta)>
+    with the exact Gaussian average
+    <cos 2(theta0 + theta)> = cos(2 theta0) exp(-2 sigma^2).
+    """
+    vs = np.asarray(v_squeezed, dtype=float)
+    va = np.asarray(v_antisqueezed, dtype=float)
+    s = float(theta_rms)
+    t0 = float(static_offset)
+    if s < 0.0 or not np.isfinite(s):
+        raise ValueError("theta_rms must be finite and >= 0")
+    mean_cos2 = np.cos(2.0 * t0) * np.exp(-2.0 * s * s)
+    c2 = 0.5 * (1.0 + mean_cos2)          # <cos^2>
+    out = vs * c2 + va * (1.0 - c2)
+    return float(out) if np.ndim(out) == 0 else out
+
+
+def phase_noise_squeezing_db(sq_db, anti_db, theta_rms,
+                             static_offset=0.0):
+    """`phase_noise_variance` with source levels in dB relative to
+    vacuum (squeezing negative, antisqueezing positive); returns the
+    detected level in dB."""
+    vs = VACUUM_VARIANCE * 10.0 ** (float(sq_db) / 10.0)
+    va = VACUUM_VARIANCE * 10.0 ** (float(anti_db) / 10.0)
+    v = phase_noise_variance(vs, va, theta_rms, static_offset)
+    return 10.0 * np.log10(v / VACUUM_VARIANCE)
+
+
+def max_phase_noise(target_variance, v_squeezed, v_antisqueezed):
+    """Largest RMS phase jitter that still delivers a target variance.
+
+    Inverts the Gaussian-averaged mixing formula for sigma (no static
+    offset): the planning number of a homodyne experiment, the phase-
+    noise counterpart of `required_efficiency`. Refuses a target the
+    source cannot reach at any jitter: below V_sq (phase noise cannot
+    improve squeezing) or at/above the sigma -> infinity limit
+    (V_sq + V_anti)/2, where the measurement no longer distinguishes
+    the quadratures.
+    """
+    Vt = float(target_variance)
+    Vs = float(v_squeezed)
+    Va = float(v_antisqueezed)
+    if not (Va > Vs >= 0.0):
+        raise ValueError("need v_antisqueezed > v_squeezed >= 0")
+    mid = 0.5 * (Vs + Va)
+    if Vt < Vs:
+        raise ValueError("phase noise cannot improve squeezing: the "
+                         "target lies below the source variance")
+    if Vt >= mid:
+        raise ValueError(
+            f"target {Vt:.4g} is not phase-noise-limited: even "
+            f"infinite jitter only degrades to (V_sq + V_anti)/2 = "
+            f"{mid:.4g}. Check the loss budget instead")
+    # Vt = Vs c2 + Va (1 - c2), c2 = (1 + e^{-2 s^2})/2
+    e = (Vs + Va - 2.0 * Vt) / (Va - Vs)      # = exp(-2 sigma^2)
+    return float(np.sqrt(-0.5 * np.log(e)))

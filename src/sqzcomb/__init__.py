@@ -19,7 +19,9 @@ from .spectra import (output_covariance_xxpp, output_entanglement,
                       output_quadrature_variance, squeezing_db)
 from .detection import (dark_from_clearance_db, detected_squeezing_db,
                         detected_variance, lossy_channel_xxpp,
-                        required_efficiency, required_efficiency_db)
+                        max_phase_noise, phase_noise_squeezing_db,
+                        phase_noise_variance, required_efficiency,
+                        required_efficiency_db)
 from .entangle import (duan_epr_sum, entanglement_report,
                        logarithmic_negativity, ppt_symplectic_eigenvalue,
                        two_mode_reduction)
@@ -33,7 +35,7 @@ from .physical import (RingSpec, intracavity_photons, normalized_detuning,
                        normalized_pump, physical_frequency, threshold_power)
 from .fitnoise import NoiseFit, fit_noise_spectra, noise_spectrum_db
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -54,4 +56,5 @@ __all__ = [
     "logarithmic_negativity", "duan_epr_sum", "entanglement_report",
     "detected_variance", "detected_squeezing_db", "dark_from_clearance_db",
     "lossy_channel_xxpp", "required_efficiency", "required_efficiency_db",
+    "phase_noise_variance", "phase_noise_squeezing_db", "max_phase_noise",
 ]
