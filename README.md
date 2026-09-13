@@ -92,11 +92,12 @@ hbar = 2, vacuum exactly the identity).
   additive electronic noise, as scalar maps and as the Gaussian
   channel on covariance matrices; `required_efficiency` inverts it
   into the number an experiment plans around. New in v0.10,
-  local-oscillator **phase noise** -- the limit the 2026 unified
-  variance budget of integrated squeezers identifies once loss is
-  tamed (Dean et al., npj Nanophotonics (2026)) -- via the exact
-  Gaussian-averaged quadrature mixing law (Dwyer 2013; Oelker 2016),
-  with `max_phase_noise` inverting it into the jitter budget a
+  local-oscillator **phase noise**: when the measurement phase
+  jitters, squeezing mixes with antisqueezing, and the package
+  averages that mixing exactly for Gaussian jitter (Dwyer 2013;
+  Oelker 2016) -- the limit identified for integrated squeezers once
+  loss is tamed (Dean et al., npj Nanophotonics (2026)).
+  `max_phase_noise` inverts the law into the jitter budget a
   homodyne experiment plans around.
 - **Supermodes**: `principal_quadratures` finds the deepest squeezing
   any generalized quadrature of a multimode state attains, and the
