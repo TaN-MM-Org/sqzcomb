@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.0 (2026-09-17)
+
+Lab adaptability: plan the measurement before taking it, and
+calibrate the hardest ring number from a routine one.
+
+- `lab.plan_noise_measurement`: predicted error bars for a planned
+  noise-spectrum measurement -- the same (J^T W J)^-1 matrix the fit
+  reports, evaluated before any data exists -- with a scale-invariant
+  identifiability verdict. The single-quadrature degeneracy that
+  `fit_noise_spectra` refuses after the fact is reported here before
+  the beam time, by exact rank arithmetic.
+- `lab.design_noise_frequencies`: greedy D-optimal choice of analysis
+  frequencies (Pukelsheim, Optimal Design of Experiments, SIAM
+  (2006)), refusing candidate lists that cannot identify the
+  parameters.
+- `lab.ring_from_threshold`: g0 calibrated from the measured comb
+  threshold power by exact inversion of `threshold_power`'s
+  F_th^2 = 1 + (alpha - 1)^2 identity, returning a ready-to-use
+  `RingSpec` whose `reference` records the calibration, with the
+  exactly propagated error bar.
+- `lab.save_spectra_csv` / `load_spectra_csv`: a plain, checked CSV
+  contract for measured spectrum pairs; round trips are exact.
+- Anchors: planner and fit sigmas agree as two code paths of one
+  matrix; the single-quadrature information matrix is exactly
+  rank-deficient (unit-free singular value below 1e-8 of the largest)
+  while the two-quadrature one is not; the greedy design never loses
+  to a random subset; the g0 round trip through `threshold_power` is
+  exact to machine precision and its error bar matches finite
+  differences; CSV round trips are bit-exact.
+
 ## 0.10.0 (2026-09-13)
 
 Physics upgrade from the 2026 literature: local-oscillator phase

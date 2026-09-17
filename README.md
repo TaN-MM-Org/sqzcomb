@@ -65,6 +65,40 @@ Conventions, stated once and stable: time in photon lifetimes,
 eta = kappa_ex / kappa, vacuum variance 1/2 (xxpp export uses
 hbar = 2, vacuum exactly the identity).
 
+## Adapting it to your lab
+
+The fit closes the loop after a measurement; the `lab` tools close it
+before, and calibrate the one ring number a lab rarely measures
+directly:
+
+```python
+import numpy as np
+import sqzcomb as sc
+
+# Would this measurement work? Predicted error bars for a planned
+# trace (both quadratures, 0.1 dB per point), before beam time:
+f = np.linspace(1e6, 60e6, 40)
+plan = sc.plan_noise_measurement(mu=0.5, eta=0.6, kappa_hz=20e6,
+                                 f_hz=f, sigma_db=0.1)
+print(plan["identifiable"], plan["sigma"])
+
+# Which analysis frequencies matter most? Pick the best 8:
+pick = sc.design_noise_frequencies(0.5, 0.6, 20e6, f, 8, sigma_db=0.1)
+
+# Calibrate g0 from the measured comb threshold power -- an exact
+# inversion of this package's own threshold identity:
+ring, sigma_g0 = sc.ring_from_threshold(
+    kappa_hz=20e6, eta_esc=0.8, threshold_w=2.1e-3,
+    lambda_pump_m=1.55e-6, reference="threshold sweep 2026-09-17",
+    sigma_kappa_hz=0.4e6, sigma_threshold_w=0.05e-3)
+```
+
+The planner catches the same degeneracy the fit refuses -- one
+quadrature alone can never determine three parameters -- before the
+measurement instead of after. Measured spectra travel in a plain,
+checked CSV format (`save_spectra_csv` / `load_spectra_csv`) whose
+round trip is exact.
+
 ## What is inside
 
 - **The classical field**: a Lugiato-Lefever split-step solver whose
@@ -110,7 +144,7 @@ hbar = 2, vacuum exactly the identity).
 
 ## How it is checked
 
-85 tests (Python 3.9-3.13, run in CI on every push), every physics
+91 tests (Python 3.9-3.13, run in CI on every push), every physics
 claim anchored to a closed form, an exact identity, or two
 independent code paths -- never a stored number. Highlights: vacuum
 passes any passive device unchanged at every coupling, port and
@@ -130,7 +164,11 @@ noise-spectrum fit recovering generating parameters with Monte-Carlo
 scatter matching its reported uncertainties; and the phase-noise
 closed form held against direct numerical integration over the
 jitter distribution, its exact zero- and infinite-jitter limits, and
-its exact commutation with the loss channel.
+its exact commutation with the loss channel. The lab tools are
+checked the same way: planner and fit report the same error bars
+as two code paths of one matrix, the single-quadrature degeneracy
+shows up as an exact rank deficiency, and the g0 calibration
+round-trips through `threshold_power` to machine precision.
 
 ## Honest limits
 
