@@ -34,11 +34,12 @@ from .physical import (RingSpec, intracavity_photons, normalized_detuning,
                        normalized_dispersion, normalized_frequency,
                        normalized_pump, physical_frequency, threshold_power)
 from .fitnoise import NoiseFit, fit_noise_spectra, noise_spectrum_db
+from .inference import infer_source
 from .lab import (design_noise_frequencies, load_spectra_csv,
                   plan_noise_measurement, ring_from_threshold,
                   save_spectra_csv)
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -62,4 +63,5 @@ __all__ = [
     "phase_noise_variance", "phase_noise_squeezing_db", "max_phase_noise",
     "plan_noise_measurement", "design_noise_frequencies",
     "ring_from_threshold", "save_spectra_csv", "load_spectra_csv",
+    "infer_source",
 ]
