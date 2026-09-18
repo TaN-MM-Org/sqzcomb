@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.12.0 (2026-09-18)
+
+Source inference, and a future-proofing pass.
+
+- `inference.infer_source`: the closed-form inversion of a measured
+  squeezing/anti-squeezing pair under the standard pure-state-plus-
+  loss model -- the routine "inferred on-chip squeezing" of the
+  2025-2026 literature (usage context: Ulanov et al., Nat. Commun.
+  16, 10791 (2025); Karnik et al., arXiv:2605.27607) -- with its
+  pure-state assumption stated, exact error propagation, and
+  refusals for everything the algebra can catch (sub-vacuum
+  uncertainty products, missing antisqueezing, implied efficiency
+  outside (0, 1]).
+- CI now also runs on Python 3.14.
+- Anchors: the inversion is the exact inverse of the package's own
+  `detected_variance` over a grid of sources and efficiencies (two
+  code paths, machine precision); the inferred source restores
+  V_s V_a = 1/4 exactly; error bars match seeded Monte Carlo; the
+  published Ulanov pair runs to a physical efficiency with no paper
+  number asserted; every refusal pinned.
+
 ## 0.11.0 (2026-09-17)
 
 Lab adaptability: plan the measurement before taking it, and

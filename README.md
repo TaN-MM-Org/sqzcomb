@@ -65,6 +65,31 @@ Conventions, stated once and stable: time in photon lifetimes,
 eta = kappa_ex / kappa, vacuum variance 1/2 (xxpp export uses
 hbar = 2, vacuum exactly the identity).
 
+## What the losses hid: source inference
+
+The standard characterization of the 2025-2026 on-chip squeezing
+literature is a measured pair -- squeezed and antisqueezed dB after
+all losses -- from which the source is inferred (as in Ulanov et
+al., Nat. Commun. 16, 10791 (2025), and the 18-dB TFLN inference of
+Karnik et al., arXiv:2605.27607). Under the standard model (a pure
+squeezed state followed by loss) the pair determines the source and
+the total efficiency in CLOSED FORM, and `infer_source` ships that
+algebra with its assumptions stated:
+
+```python
+from sqzcomb import infer_source
+
+out = infer_source(sq_db=-1.71, anti_db=5.54, sigma_db=0.1)
+print(out["eta"], out["sq_db_source"], out["sq_db_source_sigma"])
+```
+
+The refusals catch what the algebra can catch -- a measured
+uncertainty product below vacuum (impossible after loss), a missing
+antisqueezing trace, an implied efficiency outside (0, 1] -- and the
+docstring says plainly that "inferred squeezing" is a model
+statement: an impurer-than-assumed source makes the inferred numbers
+flatter than reality.
+
 ## Adapting it to your lab
 
 The fit closes the loop after a measurement; the `lab` tools close it
@@ -144,7 +169,7 @@ round trip is exact.
 
 ## How it is checked
 
-91 tests (Python 3.9-3.13, run in CI on every push), every physics
+95 tests (Python 3.9-3.14, run in CI on every push), every physics
 claim anchored to a closed form, an exact identity, or two
 independent code paths -- never a stored number. Highlights: vacuum
 passes any passive device unchanged at every coupling, port and
