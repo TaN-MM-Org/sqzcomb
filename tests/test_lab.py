@@ -134,6 +134,25 @@ def test_spectra_csv_round_trip_and_refusals(tmp_path):
         save_spectra_csv(path, F, sq[:-1], an)
 
 
+def test_plan_and_design_work_at_full_efficiency():
+    """eta = 1 is allowed (eta in (0, 1]). The planner's finite
+    difference must not step to eta > 1 (NaN), which made 0.12.0 call
+    an identifiable design unidentifiable and made
+    design_noise_frequencies refuse it. The planner must still agree
+    with the fit, which handles eta = 1 correctly."""
+    sq = noise_spectrum_db(MU, 1.0, KAPPA, F, "squeezed")
+    an = noise_spectrum_db(MU, 1.0, KAPPA, F, "anti")
+    fit = fit_noise_spectra(F, sq, an, sigma_db=SIG)
+    plan = plan_noise_measurement(MU, 1.0, KAPPA, F, sigma_db=SIG)
+    assert plan["identifiable"]
+    assert np.all(np.isfinite(plan["fisher"]))
+    for name in ("mu", "eta", "kappa_hz"):
+        assert abs(plan["sigma"][name] - fit.sigma[name]) \
+            < 0.02 * fit.sigma[name]
+    out = design_noise_frequencies(MU, 1.0, KAPPA, F, 6, sigma_db=SIG)
+    assert len(set(out["indices"])) == 6 and out["sigma"] is not None
+
+
 def test_plan_refusals():
     with pytest.raises(ValueError, match="mu"):
         plan_noise_measurement(1.5, ETA, KAPPA, F)
