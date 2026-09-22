@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.12.1 (2026-09-22)
+
+A bug fix, a wider CI matrix, and a rewritten README.
+
+### Fixed
+
+- `lab.plan_noise_measurement` took its central-difference step in
+  `eta` past 1. At `eta = 1`, which it accepts, the model returned NaN
+  there, so the planner reported an identifiable design as not
+  identifiable (`sigma` None) and `design_noise_frequencies` refused it
+  ("even the full candidate list cannot determine the parameters").
+  At that edge it now uses a backward difference. `fit_noise_spectra`
+  was not affected.
+
+### Tests
+
+- `test_plan_and_design_work_at_full_efficiency` (tests/test_lab.py):
+  at `eta = 1` the planner is identifiable, its information matrix is
+  finite, its error bars match the fit's within 2 %, and
+  `design_noise_frequencies` returns a design. It fails on 0.12.0.
+  96 tests in total.
+
+### Changed
+
+- CI now also runs Python 3.10 (the matrix is 3.9 to 3.14), and a new
+  `oldest-dependencies` job runs the suite on Python 3.10 with
+  NumPy 1.22.0, SciPy 1.10.0 and QuTiP 4.7.0, the lowest versions
+  `pyproject.toml` allows. No code change was needed for them.
+- README rewritten for readers outside the field: a guide to the terms,
+  units and conventions, ten examples each with the output it prints,
+  the refusals, and the test checks with their real tolerances. The old
+  README's short prediction example stopped with an "unstable" error;
+  it said the xxpp export uses hbar = 2, which holds for
+  `covariance_xxpp` but not for `output_covariance_xxpp` (vacuum
+  0.5 I); and it listed Python 3.9-3.14 in CI, but 3.10 was not run.
+- CONTRIBUTING.md: the dependency note said "NumPy only"; SciPy has
+  been required since 0.9.0.
+
+### Notes on earlier entries
+
+- 0.12.0: "exact inverse ... machine precision" -- the test holds the
+  efficiency to 1e-9 and the source variance to 1e-12, and the pure-state
+  product V_s V_a = 1/4 to 1e-9. The error bars are central differences
+  of the closed form, not exact derivatives; they match seeded Monte
+  Carlo within 20 %.
+- 0.11.0: "the greedy design never loses to a random subset" -- the
+  test compares it with 30 random subsets of the same size.
+- The old README: "Monte-Carlo scatter matching its reported
+  uncertainties" (of the 0.9.0 noise-spectrum fit) -- the test accepts
+  a scatter between 0.4 and 2 times the reported error bars (40 fits).
+
 ## 0.12.0 (2026-09-18)
 
 Source inference, and a future-proofing pass.

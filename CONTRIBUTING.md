@@ -26,7 +26,8 @@ priority.
 4. New material constants or coefficients must carry a full citation in
    the mandatory `reference` field and in the docstring; uncited
    numbers are not merged, whatever their provenance.
-5. Keep dependencies minimal (currently NumPy only); adding one requires
+5. Keep dependencies minimal (currently NumPy and SciPy; QuTiP only for
+   the optional `interop` extra); adding one requires
    discussion in an issue first.
 
 ## Style
