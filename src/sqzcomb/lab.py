@@ -124,6 +124,11 @@ def _rows(mu, eta, kappa_hz, f, sig, quadratures, names, dark=0.0):
         if name in ("mu", "eta") and xm[name] <= 0.0:
             xm[name] = x0[name]
             jac[:, j] = (model(xp) - model(xm)) / h
+        elif name == "eta" and xp[name] > 1.0:
+            # eta = 1 is allowed; eta > 1 is outside the model (NaN),
+            # so at that edge step backward only
+            xp[name] = x0[name]
+            jac[:, j] = (model(xp) - model(xm)) / h
         else:
             jac[:, j] = (model(xp) - model(xm)) / (2.0 * h)
     return jac * w[:, None]

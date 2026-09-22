@@ -39,7 +39,7 @@ from .lab import (design_noise_frequencies, load_spectra_csv,
                   plan_noise_measurement, ring_from_threshold,
                   save_spectra_csv)
 
-__version__ = "0.12.0"
+__version__ = "0.12.1"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
