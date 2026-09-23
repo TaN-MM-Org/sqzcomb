@@ -28,6 +28,11 @@ It answers questions such as:
   measured noise spectra, what did the source itself produce?
 - Before measuring: will the planned frequencies pin down the
   parameters at all?
+- What happens above threshold, or when single photons matter and the
+  light is no longer Gaussian?
+- How much does classical noise (a wandering resonance, a noisy pump
+  laser) spoil the squeezing?
+- How squeezed is a pulse of light made with a pulsed pump?
 
 When a question falls outside what the model can answer, the package
 stops with an error that says why, instead of returning a number that
@@ -63,8 +68,9 @@ why](#when-it-refuses-and-why)).
 - **Pump, detuning, threshold** -- the pump is the driving laser. Its
   **detuning** is how far it sits from the ring's resonance. Above the
   **threshold** pump power the ring starts to oscillate on new comb
-  lines; this package's quantum-noise part works **below** that point
-  (or around a stable steady state such as a soliton). In the model,
+  lines. Most of this package describes the noise around a stable
+  steady state (below threshold, or a soliton); the above-threshold
+  tools are described in examples 11 and 12. In the model,
   `F` is the pump strength and `alpha` the detuning, both in
   normalized units; `mu` is the pump strength seen by the quantum
   noise (the "parametric gain"), with `mu = 1` the threshold of a
@@ -114,6 +120,26 @@ why](#when-it-refuses-and-why)).
   small quantum fluctuations obey. Almost every function here takes or
   returns one. It must be **stable** (all eigenvalues with negative
   real part) for a steady noise level to exist.
+- **Gaussian state, linearization** -- the usual approximation for
+  bright light: small noise around a large classical field, whose
+  statistics are then fully set by the covariance matrix. It fails when
+  individual photons matter.
+- **Master equation, Fock basis, Wigner function** -- the full quantum
+  description of a few modes: the state is a matrix over photon
+  numbers 0, 1, 2, ... (the **Fock basis**, cut off at some maximum).
+  The **Wigner function** is a picture of that state over the two
+  quadratures; where it goes **negative** the state is not Gaussian
+  and has no classical counterpart.
+- **Technical noise** -- classical noise added by the hardware: the
+  resonance frequency wandering with temperature
+  (**thermorefractive noise**), pump-laser intensity and phase noise. It
+  is given as a **power spectral density (PSD)**: noise power per unit
+  bandwidth.
+- **Temporal mode** -- with a pulsed local oscillator the detector
+  measures one pulse-shaped mode of the output light, set by the LO's
+  pulse shape.
+- **Purity** -- 1 for a pure quantum state; lower when the state also
+  carries classical randomness (a squeezed state with excess noise).
 
 ## Install and requirements
 
@@ -154,7 +180,7 @@ newer. QuTiP (4.7 or newer) is needed only for `drift_from_qutip`.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with sqzcomb 0.12.1. The device and pump numbers are
+printed with sqzcomb 0.13.0. The device and pump numbers are
 illustrative values chosen for the example, not measured data, except
 the measured pair in example 6, which is quoted from the paper named
 there.
@@ -565,13 +591,307 @@ it has at most two mode operators per term)
 and rebuilds it; anything it cannot rebuild (such as a Kerr term) is
 refused rather than silently linearized.
 
+### 11. Above threshold: bright states, and the exact answer
+
+```python
+import numpy as np
+from sqzcomb import (kerr_parametric_states, kerr_parametric_master,
+                     steady_state, master_moments, master_output_spectrum,
+                     output_quadrature_variance)
+
+mu, chi = 1.5, 0.1               # 50 % above threshold; Kerr shift per photon
+for s in kerr_parametric_states(mu, delta=0.0, chi=chi):
+    print(f"alpha = {s['alpha']:.3f}  photons = {s['n']:6.3f}  stable = {s['stable']}")
+
+bright = kerr_parametric_states(mu, 0.0, chi)[1]
+H, c_ops, a, dims = kerr_parametric_master(mu, 0.0, chi, cutoff=70)
+rho = steady_state(H, c_ops, dims)            # exact, no linearization
+print(f"exact mean photon number: {master_moments(rho, a)['n']:.3f}")
+phi = np.angle(bright["alpha"]) + np.pi / 2   # at right angles to alpha
+for om in (0.0, 2.0):
+    lin = output_quadrature_variance(bright["drift"], 1.0, om, 0, 1, phi=phi)
+    exact = master_output_spectrum(H, c_ops, a, 1.0, [om], phi)[0]
+    print(f"omega = {om}: linearized {lin:.4f}, exact {exact:.4f} (vacuum 0.5)")
+```
+
+```
+alpha = 0.000+0.000j  photons =  0.000  stable = False
+alpha = 3.052+1.365j  photons = 11.180  stable = True
+alpha = -3.052-1.365j  photons = 11.180  stable = True
+exact mean photon number: 10.642
+omega = 0.0: linearized 0.9000, exact 12.4750 (vacuum 0.5)
+omega = 2.0: linearized 0.6176, exact 0.5078 (vacuum 0.5)
+```
+
+Above threshold a Kerr ring does not grow forever: each photon shifts
+the resonance by `chi` (in units of `kappa/2`, `chi = 2 g0 / kappa`),
+and the growth stops at two bright states `+alpha` and `-alpha` (the
+two phases of a parametric oscillator). `kerr_parametric_states` finds
+them by algebra and gives the drift matrix around each one, so all the
+spectra functions work there. `kerr_parametric_master` and
+`steady_state` solve the same model exactly in a photon-number basis,
+with no linearization. The two agree better as `chi` gets smaller (the
+tests check that the gap shrinks). At `omega = 0` they differ a lot:
+now and then the ring jumps between `+alpha` and `-alpha`, which the
+linearized theory leaves out. That adds noise in a narrow band around
+`omega = 0` whose width equals the slowest decay rate of the master
+equation (about `8e-4` here, in units of `kappa/2`). It shows up even
+in this quadrature, at right angles to `alpha`, because the exact
+lobes sit very slightly rotated from the classical `alpha`; in the
+quadrature along `alpha` the extra noise is far larger. The Fock basis must be large enough:
+`steady_state` refuses when the top levels hold more than `1e-6` of the
+population.
+
+### 12. A non-Gaussian state
+
+```python
+import numpy as np
+from sqzcomb import (kerr_parametric_master, coherent_state, master_evolve,
+                     wigner, wigner_negativity)
+
+N, chi = 40, 1.0
+H, _, a, dims = kerr_parametric_master(0.0, 0.0, chi, cutoff=N)  # Kerr only
+rho0 = coherent_state(2.0, N)                 # a laser-like (Gaussian) state
+rho_t = master_evolve(H, [], rho0, [np.pi / chi])[0]
+x = np.linspace(-6, 6, 241)
+print(f"negative volume, start:     {wigner_negativity(rho0, x, x):.4f}")
+print(f"negative volume, t = pi/chi: {wigner_negativity(rho_t, x, x):.4f}")
+print(f"Wigner function at the origin: {wigner(rho_t, [0.0], [0.0])[0, 0]:+.4f}")
+```
+
+```
+negative volume, start:     0.0000
+negative volume, t = pi/chi: 0.2932
+Wigner function at the origin: +0.0001
+```
+
+`master_evolve` follows the master equation in time. Starting from a
+coherent (laser-like, Gaussian) state, the Kerr effect alone turns it
+into a superposition of two coherent states (a "cat state") at
+`t = pi / chi`; its Wigner function has negative regions, which no
+Gaussian state has. For this lossless case the test suite compares
+every matrix element with the exact analytic answer. With the ring's
+loss switched on (pass `c_ops` instead of `[]`), the cat only survives
+if the Kerr shift per photon is much larger than the loss rate: the
+negative volume at `t = pi / chi` is 0.29 without loss, and with loss
+about 0 for `chi = 1`, 0.019 for `chi = 10` and 0.165 for `chi = 50`.
+The steady states of the parametric oscillator were non-negative in
+the six cases we tried.
+
+### 13. Technical noise: a wandering resonance
+
+```python
+import numpy as np
+from sqzcomb import (RingSpec, lle_evolve, fluctuation_matrix,
+                     output_quadrature_variance, squeezing_db,
+                     lle_mode_amplitudes, resonance_noise_drive,
+                     classical_noise_variance, normalized_psd)
+
+ring = RingSpec(kappa_hz=100e6, eta_esc=0.8, g0_hz=10.0,
+                lambda_pump_m=1.55e-6, reference="illustrative values")
+chi = 2 * ring.g0 / ring.kappa                  # Kerr shift per photon, units kappa/2
+F, alpha = 0.9, 0.3
+psi = lle_evolve(np.full(16, 0.05 + 0j), F=F, alpha=alpha, t_end=100.0)
+M, modes = fluctuation_matrix(psi, alpha)
+i0 = int(np.where(modes == 0)[0][0])
+c = lle_mode_amplitudes(psi, modes, chi)        # mean field, photon units
+b = resonance_noise_drive(c)                    # all lines shift together
+
+# An illustrative resonance-frequency noise: flat 1 Hz^2/Hz at 5 MHz.
+f = 5e6
+om, S = normalized_psd(ring, f, 1.0, kind="frequency")
+phis = np.linspace(0, np.pi, 181)
+q = [output_quadrature_variance(M, 0.8, om, i0, modes.size, phi=p) for p in phis]
+k = int(np.argmin(q))
+extra = classical_noise_variance(M, 0.8, om, [b], [S], i0, phi=phis[k])
+print(f"photons in the pumped line: {abs(c[i0]) ** 2:.3e}")
+print(f"quantum only:        {squeezing_db(q[k]):.3f} dB")
+print(f"with the added noise: {squeezing_db(q[k] + extra):.3f} dB")
+```
+
+```
+photons in the pumped line: 3.494e+06
+quantum only:        -4.191 dB
+with the added noise: -3.159 dB
+```
+
+`lle_mode_amplitudes` converts the steady state (here a flat,
+single-line state; a comb or soliton works the same way) to photon
+units (the
+classical noise competes with vacuum noise, one photon's worth, so the
+photon number matters). `resonance_noise_drive` describes the whole
+comb of resonances shifting together, `normalized_psd` converts a
+laboratory PSD (here a made-up flat 1 Hz^2/Hz) to model units, and
+`classical_noise_variance` gives the variance it adds at the output,
+to be added to the quantum noise. `pump_noise_drive` and
+`gain_noise_drive` do the same for pump-laser amplitude and phase
+noise. The package carries the noise through the resonator exactly;
+the PSD itself (thermorefractive, Raman, laser) is yours to supply,
+with its source.
+
+### 14. A pulsed pump
+
+```python
+import numpy as np
+from sqzcomb import parametric_pulse_drift, temporal_mode_variance
+
+# Pump pulse (in units of the cavity time 2/kappa) whose peak gain
+# briefly exceeds threshold (|mu| = 1.6 > 1); the detector's LO pulse
+# is a Gaussian centred slightly later.
+mu = lambda t: 1.6 * np.exp(-((t - 5.0) / 1.5) ** 2)
+lo = lambda t: np.exp(-((t - 7.0) / 1.5) ** 2)       # normalized for you
+drift = parametric_pulse_drift(mu)
+for phi in (np.pi / 2, 0.0):
+    r = temporal_mode_variance(drift, (0.0, 14.0), lo, eta=0.85, phi=phi,
+                               max_step=0.05)
+    print(f"phi = {phi:.3f}: {r['squeezing_db']:+.2f} dB "
+          f"(peak photons in the ring {r['max_photons']:.2f})")
+```
+
+```
+phi = 1.571: -5.91 dB (peak photons in the ring 4.69)
+phi = 0.000: +16.71 dB (peak photons in the ring 4.69)
+```
+
+With a pulsed pump the drift matrix changes in time, so there is no
+steady state. `temporal_mode_variance` integrates the quantum noise
+forward in time and returns the noise of the pulse-shaped mode that the
+LO selects (vacuum = 0.5, as everywhere). For a short time the gain
+here is above threshold (`|mu| = 1.6`), which is fine for this linear
+model: the light is simply amplified. For a real Kerr ring the
+linearization needs the photon number to stay small against `1/chi`,
+which is why the peak photon number is reported. For a pulse train
+that repeats once per round trip, see "Pulsed pumping" under [What is
+in the package](#what-is-in-the-package).
+
+### 15. Two rings with different line spacings
+
+```python
+import numpy as np
+from sqzcomb import (lle_evolve, ring_line_frequencies,
+                     vernier_molecule_fluctuation_matrix,
+                     output_variance_ports, squeezing_db)
+
+F, alpha, d2 = 0.9, 0.5, -0.15
+psi = lle_evolve(np.full(64, 0.1 + 0j), F=F, alpha=alpha, dispersion=(d2,),
+                 t_end=300.0)
+fsr = 600.0                                  # main-ring FSR in units of kappa/2
+aux = ring_line_frequencies(np.arange(-8, 9), offset=0.3,
+                            fsr=fsr * 1.07)  # auxiliary ring: 7 % wider spacing
+M, g, modes, pairs = vernier_molecule_fluctuation_matrix(
+    psi, alpha, J=1.5, gamma_b=1.0, fsr=fsr, aux_frequencies=aux,
+    dispersion=(d2,), modes=range(-3, 4))
+for k, d in zip(pairs["partner"], pairs["aux_delta"]):
+    print(f"main line {k:+d}: nearest auxiliary line detuned by {d:8.2f}")
+m = modes.size
+j = m + int(np.where(pairs["partner"] == 0)[0][0])   # aux partner of line 0
+phis = np.linspace(0, np.pi, 181)
+best = min(output_variance_ports(M, g, 1.0, j, 0.0, phi=p) for p in phis)
+print(f"best squeezing leaving through line 0's partner: {squeezing_db(best):.3f} dB")
+```
+
+```
+main line -3: nearest auxiliary line detuned by   125.70
+main line -2: nearest auxiliary line detuned by    83.70
+main line -1: nearest auxiliary line detuned by    41.70
+main line +0: nearest auxiliary line detuned by    -0.30
+main line +1: nearest auxiliary line detuned by   -42.30
+main line +2: nearest auxiliary line detuned by   -84.30
+main line +3: nearest auxiliary line detuned by  -126.30
+best squeezing leaving through line 0's partner: -1.990 dB
+```
+
+When the second ring's line spacing differs from the main ring's
+(here by 7 %), its lines slide past the comb like a Vernier scale: only
+one main line (here line 0) has a partner close to resonance, and the
+rest see theirs far off. `vernier_molecule_fluctuation_matrix` pairs
+each auxiliary line with its nearest main line and refuses when a line
+sits too close to midway for that pairing to hold. `ring_line_frequencies`
+builds the line frequencies from an offset, a spacing and a dispersion
+(convert Hz with `normalized_frequency`). Mind the sign: its
+`dispersion` uses the physical sign (`D2 > 0` for anomalous
+dispersion, the lines spreading apart), while the main ring's
+`dispersion` argument uses the LLE sign (`d2 < 0` anomalous, the value
+`normalized_dispersion` returns).
+
+### 16. Inference and fitting beyond the simplest model
+
+```python
+import numpy as np
+from sqzcomb import infer_source, fit_spectra_model, parametric_spectra_model
+
+# The measured pair of example 6, with and without a known purity.
+pure = infer_source(-1.71, 5.54)
+impure = infer_source(-1.71, 5.54, purity=0.8)
+print(f"pure source assumed: eta = {pure['eta']:.3f}, source {pure['sq_db_source']:.2f} dB")
+print(f"purity 0.8:          eta = {impure['eta']:.3f}, source {impure['sq_db_source']:.2f} dB")
+
+# A detuned squeezer seen at two fixed LO angles (synthetic, noise-free).
+names, model = parametric_spectra_model(detuned=True)
+true = dict(mu=0.6, eta=0.7, kappa_hz=80e6, delta=0.3, phi_sq=1.4)
+f = np.linspace(2e6, 300e6, 60)
+data = {k: 10 * np.log10(v / 0.5) for k, v in model(true, f).items()}
+bounds = dict(mu=(0, 0.99), eta=(0, 1), kappa_hz=(1e6, 1e9),
+              delta=(-2, 2), phi_sq=(0, np.pi))
+start = dict(mu=0.5, eta=0.5, kappa_hz=60e6, phi_sq=1.5)
+try:
+    fit_spectra_model(f, data, model, names, p0=dict(start, delta=0.1),
+                      bounds=bounds)
+except ValueError as err:
+    print("refused:", str(err)[:95], "...")
+fit = fit_spectra_model(f, data, model, names, p0=start, bounds=bounds,
+                        fixed=dict(delta=0.3))
+print(f"with delta known: mu = {fit.params['mu']:.4f}, eta = {fit.params['eta']:.4f}, "
+      f"kappa = {fit.params['kappa_hz'] / 1e6:.2f} MHz")
+```
+
+```
+pure source assumed: eta = 0.372, source -8.99 dB
+purity 0.8:          eta = 0.415, source -6.64 dB
+refused: the data are fitted equally well by clearly different parameter sets: {mu=0.6, eta=0.7, kappa_h ...
+with delta known: mu = 0.6000, eta = 0.7000, kappa = 80.00 MHz
+```
+
+`infer_source` can now take a known purity and a known phase jitter.
+If the source is in fact impure, assuming it pure makes it look better
+than it is (here -8.99 dB instead of -6.64 dB). One measured pair
+cannot tell you the purity; it has to come from elsewhere. When a
+known purity allows two answers, the function refuses unless you say
+which one (`branch`). `fit_spectra_model` fits any spectrum model; with
+a detuning, two fixed-angle traces are fitted exactly by more than one
+parameter set (one is the mirror image with the opposite detuning, and
+there is another with a different gain and efficiency), and the fit
+says so rather than returning one of them. Knowing the detuning
+removes the ambiguity.
+
+### 17. g0 from the nonlinear refractive index
+
+```python
+from sqzcomb import kerr_shift_from_n2
+
+# Illustrative inputs (not material data): n2 = 2.4e-19 m^2/W, n0 = 2.0,
+# V_eff = 6e-16 m^3, 1550 nm. Use numbers from your own source.
+print(f"g0/2pi = {kerr_shift_from_n2(2.4e-19, 2.0, 6e-16, 1.55e-6):.3f} Hz")
+```
+
+```
+g0/2pi = 0.743 Hz
+```
+
+`kerr_shift_from_n2` evaluates `g0 = hbar omega0^2 c n2 / (n0^2
+V_eff)`. The package still ships no material values: `n2` depends on
+the material, how it was made and the wavelength, and `V_eff` on the
+geometry and on how the mode volume is defined. A `g0` measured from
+the comb threshold (example 8) is usually the better number.
+
 ## What is in the package
 
 **Classical field**
 
-- `lle_evolve(psi0, F, alpha, dispersion, t_end, dt)` -- time-steps
+- `lle_evolve(psi0, F, alpha, dispersion, t_end, dt, d1, t0)` -- time-steps
   the LLE (split-step method; the Kerr half-steps and the linear step
-  are each solved exactly).
+  are each solved exactly). The pump `F` can be a number, a profile
+  around the ring, or a function of time (see "Pulsed pumping" below).
 - `homogeneous_steady_states(F, alpha)` -- the flat-state intensities,
   roots of `rho (1 + (alpha - rho)^2) = F^2`.
 - `newton_state`, `soliton_seed`, `continuation` -- solitons and
@@ -580,8 +900,8 @@ refused rather than silently linearized.
 
 **Quantum noise and output spectra**
 
-- `fluctuation_matrix(psi_s, alpha, dispersion, modes)` -- the drift
-  matrix around a steady state.
+- `fluctuation_matrix(psi_s, alpha, dispersion, modes, d1)` -- the
+  drift matrix around a steady state.
 - `single_mode_parametric(mu, delta)` -- the drift matrix of one
   below-threshold parametric mode (the textbook squeezer).
 - `output_quadrature_variance` -- the noise of one output quadrature
@@ -600,6 +920,47 @@ refused rather than silently linearized.
   several) of them.
 - `molecule_fluctuation_matrix` -- the multimode version: every
   retained comb line coupled to a matching line of an auxiliary ring.
+- `vernier_molecule_fluctuation_matrix`, `ring_line_frequencies` --
+  the same when the two rings' line spacings differ: each auxiliary
+  line is paired with its nearest main line.
+
+**Above threshold and non-Gaussian states**
+
+- `kerr_parametric_states`, `kerr_parametric_drift` -- the bright
+  steady states of a Kerr parametric oscillator and the drift matrix
+  around each.
+- `kerr_parametric_master`, `fock_operators`, `liouvillian`,
+  `steady_state`, `master_evolve`, `master_moments`,
+  `master_output_spectrum` -- the exact master equation of one or two
+  modes in a photon-number basis: steady state, time evolution,
+  moments, and the output noise spectrum.
+- `fock_state`, `coherent_state`, `wigner`, `wigner_negativity` --
+  states to start from, the Wigner function, and its negative volume.
+
+**Technical noise**
+
+- `classical_noise_variance`, `classical_noise_variance_ports` -- the
+  variance a classical noise adds at the output (one port, or the
+  molecule's ports).
+- `resonance_noise_drive`, `pump_noise_drive`, `gain_noise_drive` --
+  how a wandering resonance, pump amplitude or phase noise (on one
+  line, or on every line a pulsed pump feeds), or noise on the
+  parametric gain enters; `lle_mode_amplitudes` -- the comb's
+  mean field in photon units; `normalized_psd` -- laboratory PSD to
+  model units.
+
+**Pulsed pumping**
+
+- `covariance_evolution`, `temporal_mode_variance`,
+  `parametric_pulse_drift` -- the quantum noise followed in time for a
+  pump that changes in time, and the noise of a pulse-shaped output
+  mode.
+- A pulse train repeating once per round trip enters the LLE as a pump
+  profile `F(theta)`; `d1` is the drift when the pulse repetition rate
+  `f_rep` differs from the ring's free spectral range `f_FSR`,
+  `d1 = 4 pi (f_rep - f_FSR) / kappa`. `newton_state` and
+  `fluctuation_matrix` accept both, so solitons driven by pulses and
+  their noise spectra work as for a steady pump.
 
 **Gaussian states and entanglement**
 
@@ -636,8 +997,15 @@ refused rather than silently linearized.
 - `fit_noise_spectra`, `NoiseFit`, `noise_spectrum_db` -- fit
   `(mu, eta, kappa)` and optionally a dark-noise floor to measured
   spectra, and the model curve itself.
+- `fit_spectra_model`, `ModelFit`, `parametric_spectra_model`,
+  `molecule_spectra_model`, `jitter_average` -- fit any spectrum model
+  (ready-made: the single-mode model with optional detuning, LO jitter
+  and dark floor; the two-ring molecule, optionally detuned), with
+  checks that the data determine the parameters.
 - `infer_source` -- the source behind a measured squeezed /
-  antisqueezed pair.
+  antisqueezed pair, optionally with a known purity and phase jitter.
+- `kerr_shift_from_n2` -- `g0` from `n2`, the refractive index and the
+  mode volume that you supply.
 - `plan_noise_measurement`, `design_noise_frequencies`,
   `ring_from_threshold`, `save_spectra_csv`, `load_spectra_csv` --
   measurement planning, `g0` calibration, and a checked CSV format for
@@ -692,14 +1060,33 @@ for example) gives its inputs, units and conventions.
   parameters at all;
 - a spectra CSV file is empty, has the wrong header, no data rows,
   rows of the wrong length, a non-numeric value or a non-positive
-  frequency, or the columns to be saved differ in length.
+  frequency, or the columns to be saved differ in length;
+- `steady_state` or `master_evolve` (given `dims`) find more than
+  `trunc_tol` (default `1e-6`) of the population in the top levels of
+  the photon-number basis; `master_output_spectrum` is given a thermal
+  bath; `kerr_parametric_states` is given `chi = 0` (nothing would stop
+  the growth);
+- `infer_source` is given a purity outside (0, 1], a negative jitter, a
+  jitter too large for the measured pair, a purity that no efficiency
+  can match, or a purity that allows two answers without `branch`;
+- `fit_spectra_model` finds that the data do not determine the
+  parameters (it names the combination), or that clearly different
+  parameter sets fit equally well;
+- `vernier_molecule_fluctuation_matrix` finds an auxiliary line too
+  close to midway between two main lines for the pairing to hold;
+- `newton_state` does not converge, for example because a pulse drift
+  `d1` is too large for the soliton to lock, so that no steady state
+  exists (a refusal can also just mean the starting guess was too far
+  off: let `lle_evolve` settle the state first);
+- a pump profile has the wrong length or is not finite; a PSD is
+  negative; a mode function vanishes on the time window.
 
 ## How the results are checked
 
-96 automated tests run on every push and pull request, on Python 3.9,
+164 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest versions the package allows (NumPy 1.22.0, SciPy 1.10.0, QuTiP
-4.7.0). The three QuTiP tests are skipped when QuTiP is not installed,
+4.7.0). The five QuTiP tests are skipped when QuTiP is not installed,
 which is the case in the main matrix; they run in the oldest-versions
 job. The numerical checks compare the package with a closed-form
 result, an exact identity, or a second, independent calculation; none
@@ -804,17 +1191,109 @@ with the tolerances the tests use:
   times 4 efficiencies (efficiency to 1e-9, squeezed variance to 1e-12);
   its error bars match the scatter of 600 seeded Monte Carlo trials
   (repeated simulated measurements with random noise) within 20 %.
+  With a known purity and jitter it inverts loss plus jitter on a grid
+  of 3 squeezing levels, 4 purities, 4 efficiencies and 3 jitters
+  (efficiency to 1e-9, source to a relative 1e-9), and the grid
+  contains two-answer cases, which it flags; the pure default is
+  unchanged digit for digit; assuming purity where there is none gives
+  a lower efficiency and a source more than 1 dB better than the truth.
+- `fit_spectra_model` with the single-mode model equals
+  `fit_noise_spectra` (relative 1e-6); noise-free data give back the
+  jitter model's and the molecule's parameters to a relative 1e-6; the
+  scatter of 30 seeded fits matches the reported jitter error bar
+  within 35 %; one trace is refused as unidentifiable; the detuned
+  pair is refused as ambiguous (its mirror image fits to 1e-10 dB) and
+  fitted to 1e-6 once the detuning is fixed. The jitter law equals
+  direct numerical averaging to a relative 1e-10.
+- `kerr_shift_from_n2` gives the package's threshold power the
+  textbook form `kappa^2 n0^2 V_eff / (8 eta omega0 c n2)` (relative
+  1e-12).
+
+**Above threshold and non-Gaussian states**
+
+- With no Kerr term, the exact master-equation spectrum equals the
+  linearized one at four quadrature angles, three frequencies, and
+  also for a complex pump with detuning (1e-8); the intracavity
+  covariance matches too (1e-8), and so does the closed form of the
+  parametric mode (1e-9).
+- The steady state and the Wigner function agree with QuTiP's
+  independent solvers (1e-8 and 1e-10). The Wigner function of one
+  photon is `-1/pi` at the origin (1e-14), integrates to 1 (1e-9), has
+  the exact position marginal (1e-9) and negative volume
+  `2 exp(-1/2) - 1` (relative 1e-4).
+- Lossless Kerr evolution equals the analytic phase pattern element by
+  element (1e-10) and makes a cat state with negative volume above 0.2.
+- Bright states solve the classical equation (1e-9), their drift
+  matrix equals a finite-difference Jacobian (1e-6), and above
+  threshold the exact photon number is within 12 % of the bright
+  state's; the exact spectrum approaches the linearized one as `chi`
+  shrinks, and the extra low-frequency noise has the width of the
+  slowest master-equation rate (2 %). A too-small photon-number basis
+  is refused, also by `master_output_spectrum`.
+
+**Technical noise**
+
+- A passive mode with mean field `c` gets exactly
+  `4 eta |c|^2 S / (1 + omega^2)` in one quadrature and nothing in the
+  other (relative 1e-12). A time-domain calculation (stationary
+  covariance of the resonator plus a coloured classical noise) equals
+  the integral of the added spectrum (relative 1e-7), and a seeded
+  simulation of 12 million time steps matches the spectrum within 4 %.
+  A slow shift of the resonance or the gain moves the exact bright
+  state of the parametric oscillator as the zero-frequency response
+  predicts (relative 1e-4). The unit conversions keep the variance
+  (Parseval, relative 1e-9).
+
+**Pulsed pumping**
+
+- A passive cavity returns exactly the vacuum value 0.5 for a pulsed
+  LO mode (1e-12); with a steady pump the time-domain result converges
+  to the steady covariance (1e-9) and a long pulse gives the steady
+  spectrum weighted by the pulse's spectrum (relative 1e-8, also for
+  a mode on two sidebands). A seeded simulation of 12 000 noisy
+  trajectories with a pump pulse briefly above threshold matches the
+  pulse's variance within four standard errors.
+- A uniform pump profile equals a scalar pump (1e-13); with a uniform
+  pump, `d1` only moves the pattern (1e-12); a moving pump profile seen
+  from its own frame equals the `d1` equation (2e-5). That checks the
+  change of frame behind `d1`; its conversion to `f_rep`, `f_FSR` and
+  `kappa` is derived in the `lle` module's docstring. With a pulse-shaped pump, the soliton on the pulse
+  peak is unstable along its translation direction, and the stable one
+  sits beside the peak with every growth rate below -0.01 (so the
+  spectra need no `allow_marginal`); its mirror image is also a steady
+  state (1e-11).
+
+**Two rings with different line spacings**
+
+- With equal spacings the new builder equals the matched molecule
+  (1e-12). For passive rings its eigenvalues equal those of the exact
+  model with every line coupled to every line to within the neglected
+  couplings (below `1e-2` here), and every port returns vacuum
+  (1e-12).
 
 ## Corrections
 
-**0.12.1 (this release)** fixes one bug:
+**0.13.0 (this release)** fixes one bug: `output_quadrature_variance`
+and `output_variance_ports` read the quadrature at angle `-phi`
+instead of the documented `phi` (`X_phi = cos phi x + sin phi p`, the
+convention of `output_covariance_xxpp`). The two readings agree at
+`phi = 0` and `pi/2`, for the best angle found by scanning all angles,
+and at every angle when the pump parameter is real and there is no
+detuning, so examples 1 to 10 and `fit_noise_spectra` are unchanged.
+Otherwise (a complex pump parameter or a detuning, read at some other
+angle) a result at `phi` from 0.12.1 or earlier belongs to `-phi`.
+Every Lugiato-Lefever comb state has a detuning, so comb results read
+at a fixed angle other than 0 or `pi/2` did change. The exact
+master equation of 0.13.0 confirmed the fix independently.
+
+**0.12.1** fixed one bug:
 `plan_noise_measurement` computed its sensitivities with a step that
 went past `eta = 1`. At `eta = 1`, which the function accepts, the
 model then returned NaN, the planner reported a measurable design as
 "not identifiable", and `design_noise_frequencies` refused it. It now
 steps backward at that edge. The fit itself was not affected.
 
-This release also corrects the documentation. The old README's short
+That release also corrected the documentation. The old README's short
 prediction example stopped with an "unstable" error (its 256-line
 state is above threshold); it said the xxpp export uses `hbar = 2`,
 which is true of `covariance_xxpp` but not of `output_covariance_xxpp`
@@ -826,20 +1305,36 @@ for the real tolerances). The full history is in
 
 ## Limits
 
-- Gaussian, linearized quantum noise only: no non-Gaussian states and
-  no dynamics above threshold (unstable drift matrices are refused,
-  never averaged).
-- No technical noise of the resonator itself (thermorefractive or
-  Raman noise); these are material physics with their own modelling
-  choices.
-- Continuous-wave pumping only.
-- The multimode molecule assumes the auxiliary ring's line spacing
-  matches the main ring's, so each line couples only to its partner.
-- `infer_source` assumes a pure squeezed source followed by loss;
-  `fit_noise_spectra` fits the single-mode parametric model.
-- No material constants ship with the package: `g0`, linewidths and
-  dispersion come from your own measurements, each `RingSpec` with a
-  required `reference`.
+What 0.13.0 changed about the limits of earlier versions, and what is
+left:
+
+- **Above threshold and non-Gaussian states.** The Kerr parametric
+  oscillator's bright states and the exact master equation (examples
+  11 and 12) cover these for one or two modes. The exact model's cost
+  grows as `cutoff^(2n)` for `n` modes, so a whole comb above
+  threshold is still only available linearized around a stable steady
+  state (such as a soliton); the linearized spectra still refuse an
+  unstable drift matrix.
+- **Technical noise.** Any classical noise with a known spectrum can
+  now be carried through the resonator (example 13). The spectrum
+  itself (thermorefractive, Raman, laser noise) is not computed from
+  material physics: you supply it, with its source.
+- **Pulsed pumping.** A pump that changes over many round trips
+  (example 14) and a pulse train repeating once per round trip (pump
+  profile and `d1`) are covered. A pump that changes during a single
+  round trip in any other way is not.
+- **Two rings with different line spacings** are covered (example 15)
+  within the pairing approximation, which the builder checks.
+- **Inference and fitting.** `infer_source` takes a known purity and
+  jitter, and `fit_spectra_model` fits other models. One measured pair
+  still cannot determine the purity, and a detuned squeezer's two
+  fixed-angle traces cannot determine the detuning; the functions say
+  so rather than guess.
+- **Material constants.** Still none ship, on purpose: `n2`, loss and
+  dispersion depend on the material, its fabrication and the
+  wavelength, and a published value for one device is not a value for
+  yours. `kerr_shift_from_n2` computes `g0` from numbers you supply;
+  every `RingSpec` still requires a `reference`.
 
 ## Where it comes from
 

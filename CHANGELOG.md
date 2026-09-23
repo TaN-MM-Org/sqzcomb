@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.13.0 (2026-09-23)
+
+Beyond the limits listed in 0.12.1: above threshold, non-Gaussian
+states, technical noise, pulsed pumping, rings with different line
+spacings, more general inference and fitting. One bug fix.
+
+### Fixed
+
+- `output_quadrature_variance` and `output_variance_ports` read the
+  quadrature at angle `-phi` instead of the documented `phi`
+  (`X_phi = cos phi x + sin phi p`, the convention of
+  `output_covariance_xxpp`). Results at `phi = 0`, `pi/2`, for the best
+  angle over a scan, and at any angle with a real pump parameter and
+  no detuning are unchanged (so is `fit_noise_spectra`); otherwise a
+  0.12.1 result at `phi` belongs to `-phi`. The existing two-path test
+  used only symmetric cases and missed it. New test:
+  `test_phi_convention_scalar_equals_covariance_path`; the exact master
+  equation (below) confirms the fix independently.
+
+### Added
+
+- `kerrpo`: `kerr_parametric_states`, `kerr_parametric_drift` -- bright
+  steady states of the Kerr parametric oscillator above threshold, by
+  algebra, and the drift matrix around each.
+- `master`: exact Fock-space master equation -- `steady_state` and
+  `master_evolve` (refuse a too-small basis when given the mode
+  dimensions; `master_output_spectrum` always checks the detected
+  mode), `master_moments`,
+  `master_output_spectrum` (quantum regression theorem),
+  `kerr_parametric_master`, `fock_operators`, `liouvillian`,
+  `fock_state`, `coherent_state`, `wigner`, `wigner_negativity`.
+- `technical`: classical (technical) noise carried through the
+  linearized resonator -- `classical_noise_variance` (and `_ports`),
+  drive vectors for resonance-frequency noise, pump amplitude/phase
+  noise (one line, or every line a pulsed pump feeds) and
+  parametric-gain noise, `lle_mode_amplitudes`,
+  `normalized_psd`.
+- `pulsed`: time-dependent Gaussian dynamics -- `covariance_evolution`,
+  `temporal_mode_variance` (noise of a pulse-shaped output mode,
+  including the reflected input noise and its correlation),
+  `parametric_pulse_drift`.
+- LLE: the pump may be a profile `F(theta)` (synchronous pulse
+  pumping) or a function `F(t)`; `d1` adds the drift between pump
+  pulses and the round trip, `d1 = 4 pi (f_rep - f_FSR) / kappa`.
+  `lle_evolve`, `newton_state`, `continuation`, `fluctuation_matrix`
+  and `molecule_fluctuation_matrix` accept them; defaults reproduce
+  0.12.1 exactly.
+- `vernier_molecule_fluctuation_matrix`, `ring_line_frequencies`: two
+  rings with different line spacings (nearest-line pairing, refused
+  when the pairing is not valid).
+- `infer_source(purity=, theta_rms=, branch=)`: known source purity and
+  LO phase jitter; two-answer cases are refused unless `branch` is
+  given. The default is unchanged digit for digit.
+- `fit_spectra_model`, `ModelFit`, `parametric_spectra_model`
+  (optional detuning, jitter, dark floor), `molecule_spectra_model`
+  (optionally detuned),
+  `jitter_average`: fitting any spectrum model, with an
+  identifiability check (scaled Jacobian condition number) and a
+  multi-start check for equally good, different answers.
+- `kerr_shift_from_n2`: `g0 = hbar omega0^2 c n2 / (n0^2 V_eff)` (as in
+  I. S. Grudinin et al., Optica 4, 434 (2017), and Phys. Rev. A 105,
+  053530 (2022)). Still no material values ship.
+
+### Tests
+
+164 tests (96 in 0.12.1). New files: `test_master_kerrpo.py`,
+`test_technical.py`, `test_pulsed.py`, `test_vernier.py`,
+`test_fitmodel.py`, `test_kerr_shift.py`; new cases in
+`test_inference.py`. Independent references used: closed forms, QuTiP
+(optional), analytic Kerr evolution, finite-difference Jacobians,
+Lyapunov (time-domain) calculations, seeded simulations of the
+equivalent classical noise equations, and the exact all-pairs model of
+two passive rings. Passed on Python 3.9 and 3.11 and on the oldest
+allowed versions (Python 3.10, NumPy 1.22.0, SciPy 1.10.0, QuTiP
+4.7.0) before release.
+
+### Changed
+
+- README: seven new examples (11 to 17) with checked output, new
+  glossary entries, the checks and refusals of the new functions, and
+  a rewritten Limits section.
+
 ## 0.12.1 (2026-09-22)
 
 A bug fix, a wider CI matrix, and a rewritten README.
