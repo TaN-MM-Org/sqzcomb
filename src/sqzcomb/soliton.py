@@ -46,22 +46,25 @@ from __future__ import annotations
 
 import numpy as np
 
-from .lle import _linear_symbol, homogeneous_steady_states
+from .lle import _linear_symbol, homogeneous_steady_states, pump_spectrum
 
 __all__ = ["newton_state", "soliton_seed", "continuation"]
 
 
-def _residual_k(psi, F, alpha, dispersion):
+def _residual_k(psi, F, alpha, dispersion, d1=0.0):
     """Stationary-LLE residual in Fourier space (FFT convention)."""
     n = psi.size
     k = np.fft.fftfreq(n, d=1.0 / n)
-    L = _linear_symbol(alpha, dispersion, k)
+    L = _linear_symbol(alpha, dispersion, k, d1)
     Rk = L * np.fft.fft(psi) + np.fft.fft(1j * np.abs(psi) ** 2 * psi)
-    Rk[0] += F * n
+    if np.ndim(F) == 0:
+        Rk[0] += F * n
+    else:
+        Rk = Rk + pump_spectrum(F, n)
     return Rk
 
 
-def _jacobian(psi, alpha, dispersion):
+def _jacobian(psi, alpha, dispersion, d1=0.0):
     """Exact Jacobian of the discrete (pseudospectral) residual, in the
     doubled Fourier basis.
 
@@ -80,7 +83,7 @@ def _jacobian(psi, alpha, dispersion):
     kgrid = np.fft.fftfreq(n, d=1.0 / n).astype(int)
     f_abs2 = np.fft.fft(np.abs(psi) ** 2) / n
     f_sq = np.fft.fft(psi ** 2) / n
-    L = _linear_symbol(alpha, dispersion, kgrid.astype(float))
+    L = _linear_symbol(alpha, dispersion, kgrid.astype(float), d1)
     # FFT layout: the component of mode value v sits at slot v mod n
     A = 2j * f_abs2[(kgrid[:, None] - kgrid[None, :]) % n]
     B = 1j * f_sq[(kgrid[:, None] + kgrid[None, :]) % n]
@@ -89,7 +92,7 @@ def _jacobian(psi, alpha, dispersion):
 
 
 def newton_state(psi0, F, alpha, dispersion=(0.0,), tol=1e-12,
-                 maxiter=60):
+                 maxiter=60, d1=0.0):
     """Newton solution of the stationary LLE from the seed psi0.
 
     Returns (psi, info) with info = {"residual", "iterations"}; the
@@ -97,17 +100,19 @@ def newton_state(psi0, F, alpha, dispersion=(0.0,), tol=1e-12,
     grid.  Raises RuntimeError if the tolerance is not reached -- a
     state is never returned unverified.  The Jacobian at each iterate
     is the exact discrete form of `fluctuation_matrix(psi, alpha,
-    dispersion)` (see `_jacobian`).
+    dispersion)` (see `_jacobian`). F may be a scalar or a pump
+    profile over the theta grid, and d1 the pulse-drift term, exactly
+    as in `lle_evolve`.
     """
     psi = np.asarray(psi0, dtype=complex).copy()
     n = psi.size
     res = np.inf
     for it in range(int(maxiter)):
-        Rk = _residual_k(psi, F, alpha, dispersion)
+        Rk = _residual_k(psi, F, alpha, dispersion, d1)
         res = float(np.abs(np.fft.ifft(Rk)).max())
         if res < tol:
             return psi, {"residual": res, "iterations": it}
-        J = _jacobian(psi, alpha, dispersion)
+        J = _jacobian(psi, alpha, dispersion, d1)
         rhs = np.concatenate([Rk / n, np.conj(Rk) / n])
         # minimal-norm least-squares step: at a localized state the
         # Jacobian is exactly singular along the translation (Goldstone)
@@ -149,7 +154,7 @@ def soliton_seed(n, F, alpha, dispersion, n_pulses=1):
 
 
 def continuation(psi0, F, alphas, dispersion=(0.0,), tol=1e-12,
-                 maxiter=60):
+                 maxiter=60, d1=0.0):
     """Sweep the detuning: Newton-solve at each alpha in ``alphas``,
     seeding each step with the previous converged state.
 
@@ -164,7 +169,7 @@ def continuation(psi0, F, alphas, dispersion=(0.0,), tol=1e-12,
     for a in alphas:
         try:
             psi, info = newton_state(psi, F, float(a), dispersion,
-                                     tol=tol, maxiter=maxiter)
+                                     tol=tol, maxiter=maxiter, d1=d1)
         except RuntimeError as exc:
             raise RuntimeError(
                 f"continuation failed at alpha = {a}: {exc}") from exc

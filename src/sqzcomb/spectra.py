@@ -83,14 +83,18 @@ def output_quadrature_variance(M, eta, omega, mode_index, n_modes,
         raise ValueError("thermal occupations must be non-negative")
     _check_spectra_stability(M, allow_marginal)
     S = _output_covariance(M, eta, omega, n_th_port, n_th_loss)
+    # u^dag z = (a e^{-i phi} + a^dag e^{i phi}) / sqrt(2) = X_phi
+    # = cos(phi) x + sin(phi) p, the documented quadrature (sqzcomb
+    # 0.12.1 and earlier built the conjugate vector here, i.e. read
+    # X_{-phi}; see the 0.13.0 changelog)
     u = np.zeros(2 * n_modes, dtype=complex)
     if mode_index_b is None:
-        u[mode_index] = np.exp(-1j * phi) / np.sqrt(2.0)
-        u[n_modes + mode_index] = np.exp(1j * phi) / np.sqrt(2.0)
+        u[mode_index] = np.exp(1j * phi) / np.sqrt(2.0)
+        u[n_modes + mode_index] = np.exp(-1j * phi) / np.sqrt(2.0)
     else:
         for idx, w in ((mode_index, 0.5), (mode_index_b, 0.5)):
-            u[idx] += np.exp(-1j * phi) * w
-            u[n_modes + idx] += np.exp(1j * phi) * w
+            u[idx] += np.exp(1j * phi) * w
+            u[n_modes + idx] += np.exp(-1j * phi) * w
     # With N giving <a a^dagger> = 1 and zero elsewhere, u^dag S u is the
     # output quadrature spectrum with vacuum level exactly 1/2; the
     # passive-cavity identity (T_ex N T_ex^dag + T_0 N T_0^dag = N for any

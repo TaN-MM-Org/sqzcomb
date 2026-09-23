@@ -54,7 +54,7 @@ from scipy.constants import hbar as _HBAR
 __all__ = ["RingSpec", "normalized_pump", "threshold_power",
            "normalized_detuning", "normalized_dispersion",
            "normalized_frequency", "physical_frequency",
-           "intracavity_photons"]
+           "intracavity_photons", "kerr_shift_from_n2"]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -161,3 +161,35 @@ def intracavity_photons(spec: RingSpec, rho) -> float:
     if r < 0.0:
         raise ValueError("rho must be non-negative")
     return float(r * spec.kappa / (2.0 * spec.g0))
+
+
+def kerr_shift_from_n2(n2_m2_per_w, n0, v_eff_m3, lambda_m):
+    """Single-photon Kerr shift g0 / 2 pi (Hz) from material and mode
+    numbers that you supply:
+
+        g0 = hbar omega0^2 c n2 / (n0^2 V_eff),
+
+    the Kerr frequency shift per photon as written by I. S. Grudinin
+    et al., Optica 4, 434 (2017), and in Phys. Rev. A 105, 053530
+    (2022) (arXiv:2112.00611, with V_eff = A_eff L).
+
+    n2_m2_per_w : nonlinear refractive index n2 (m^2/W); n0 : linear
+        refractive index; v_eff_m3 : effective nonlinear mode volume
+        (m^3); lambda_m : resonance wavelength (m).
+    The package still ships no values for any of these: n2 depends on
+    the material, its growth and the wavelength, and V_eff on your
+    geometry and on which overlap integral you use (the literature is
+    not uniform here). Supply them with their source, and prefer a
+    measured g0 (for example from the comb threshold, see
+    `sqzcomb.lab.ring_from_threshold`) when you have one.
+    """
+    n2 = float(n2_m2_per_w)
+    n0 = float(n0)
+    V = float(v_eff_m3)
+    lam = float(lambda_m)
+    for name, v in (("n2", n2), ("n0", n0), ("v_eff", V), ("lambda", lam)):
+        if not (np.isfinite(v) and v > 0.0):
+            raise ValueError(f"{name} must be finite and positive")
+    w0 = 2.0 * np.pi * _C_LIGHT / lam
+    g0 = _HBAR * w0 ** 2 * _C_LIGHT * n2 / (n0 ** 2 * V)
+    return float(g0 / (2.0 * np.pi))

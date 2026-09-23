@@ -7,6 +7,7 @@ z = (delta_a(k1..kM), delta_a*(k1..kM)) obeys  dz/dt = M z + inputs, with
          [ conj(B),  conj(A) ]]
 
     A_{kk'} = [-(1 + i alpha) + i D(k)] delta_{kk'} + 2 i (|psi_s|^2)^(k - k')
+    (D(k) includes the pulse-drift term d1 k when d1 != 0)
     B_{kk'} = i (psi_s^2)^(k + k')  (hat = Fourier component)
 
 Below threshold every eigenvalue of M has a negative real part; the module
@@ -19,11 +20,14 @@ import numpy as np
 from .lle import _linear_symbol
 
 
-def fluctuation_matrix(psi_s, alpha, dispersion=(0.0,), modes=None):
+def fluctuation_matrix(psi_s, alpha, dispersion=(0.0,), modes=None,
+                       d1=0.0):
     """Doubled-basis drift matrix M around steady state psi_s.
 
     modes : iterable of integer mode numbers to keep (default: all grid
-        modes). Returns (M, modes_array).
+        modes). d1 : pump-pulse drift term of `lle_evolve` (0 for a
+        continuous-wave pump); the pump itself never enters M.
+    Returns (M, modes_array).
     """
     psi_s = np.asarray(psi_s, dtype=complex)
     n = psi_s.size
@@ -38,7 +42,7 @@ def fluctuation_matrix(psi_s, alpha, dispersion=(0.0,), modes=None):
     comp_abs2 = dict(zip(kgrid, f_abs2))
     comp_sq = dict(zip(kgrid, f_sq))
 
-    L = _linear_symbol(alpha, dispersion, modes.astype(float))
+    L = _linear_symbol(alpha, dispersion, modes.astype(float), d1)
     A = np.zeros((m, m), dtype=complex)
     B = np.zeros((m, m), dtype=complex)
     for i, ki in enumerate(modes):

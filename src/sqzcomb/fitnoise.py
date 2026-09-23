@@ -35,6 +35,25 @@ a single-quadrature fit without a known kappa is refused (the
 degeneracy above), and refused loudly rather than returned with a
 garbage covariance; and an antisqueezed trace below shot noise --
 physically impossible for this model -- is refused.
+
+Other models (new in 0.13). `fit_spectra_model` fits ANY model that
+returns quadrature variances versus frequency, with the same least
+squares, and checks identifiability instead of assuming it: the
+Jacobian at the solution (each column scaled by its parameter's
+size) must not be close to singular, otherwise the fit refuses and
+names the parameter combination the data cannot pin down. Two ready
+models are provided: `parametric_spectra_model` (the single-mode
+model of `fit_noise_spectra`, optionally with a detuning, a phase
+jitter of the local oscillator and a dark-noise floor) and
+`molecule_spectra_model` (the two-ring `photonic_molecule`, read at
+the main or the auxiliary ring's port).
+
+Phase jitter (`jitter_average`) uses the exact fact that every
+quadrature variance of a Gaussian state is V(phi) = c0 + c1 cos 2 phi
++ c2 sin 2 phi, so averaging over a Gaussian jitter of RMS sigma
+shrinks the phi-dependent part by exp(-2 sigma^2): V_jit(phi) = Vbar
++ exp(-2 sigma^2) (V(phi) - Vbar), Vbar = (V(phi) + V(phi + pi/2)) / 2
+(the same law as `phase_noise_variance`, for any angle).
 """
 from __future__ import annotations
 
@@ -46,7 +65,9 @@ from scipy.optimize import least_squares
 from .linearize import single_mode_parametric
 from .spectra import output_quadrature_variance
 
-__all__ = ["NoiseFit", "fit_noise_spectra", "noise_spectrum_db"]
+__all__ = ["NoiseFit", "fit_noise_spectra", "noise_spectrum_db",
+           "ModelFit", "fit_spectra_model", "parametric_spectra_model",
+           "molecule_spectra_model", "jitter_average"]
 
 _VAC = 0.5
 
@@ -228,3 +249,295 @@ def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
                     dark=float(dark), sigma=sigma, chi2=chi2,
                     chi2_dof=chi2_dof, model_sq_db=msq,
                     model_anti_db=man)
+
+
+# ----------------------------------------------------------------------
+# General models (new in 0.13)
+
+
+def jitter_average(v_phi, v_phi_perp, theta_rms):
+    """Variance at LO angle phi averaged over Gaussian phase jitter.
+
+    v_phi, v_phi_perp : the variances at phi and at phi + pi/2 (vacuum
+        0.5; arrays allowed). Returns Vbar + exp(-2 theta^2)
+        (v_phi - Vbar) with Vbar their mean (exact for any Gaussian
+        state, see the module docstring).
+    """
+    t = float(theta_rms)
+    if not (np.isfinite(t) and t >= 0.0):
+        raise ValueError("theta_rms must be finite and >= 0")
+    a = np.asarray(v_phi, dtype=float)
+    b = np.asarray(v_phi_perp, dtype=float)
+    mean = 0.5 * (a + b)
+    return mean + np.exp(-2.0 * t * t) * (a - mean)
+
+
+def parametric_spectra_model(detuned=False, jitter=False, dark=False):
+    """Single-mode squeezer model for `fit_spectra_model`.
+
+    Parameters of the returned model: mu (real gain, threshold 1),
+    eta (total detection efficiency), kappa_hz (linewidth, FWHM in
+    Hz), and optionally delta (detuning in units of kappa/2) and phi_sq
+    (LO angle of the squeezed trace; the antisqueezed trace is read at
+    phi_sq + pi/2) when detuned=True, theta_rms (LO phase jitter, rad)
+    when jitter=True, and dark (white floor, shot-noise variance units)
+    when dark=True. Without detuning the traces are read at phi = pi/2
+    (squeezed) and 0 (antisqueezed), as in `fit_noise_spectra`.
+
+    Returns (names, model) with model(p, f_hz) -> {"squeezed": V,
+    "anti": V} (variances, vacuum 0.5).
+    """
+    names = ["mu", "eta", "kappa_hz"] + (["delta", "phi_sq"] if detuned
+                                         else []) \
+        + (["theta_rms"] if jitter else []) + (["dark"] if dark else [])
+
+    def model(p, f_hz):
+        om = 4.0 * np.pi * np.asarray(f_hz, dtype=float) / (
+            2.0 * np.pi * float(p["kappa_hz"]))
+        M = single_mode_parametric(float(p["mu"]),
+                                   float(p.get("delta", 0.0)))
+        ph = float(p["phi_sq"]) if detuned else np.pi / 2.0
+        eta = float(p["eta"])
+        v_sq = np.array([output_quadrature_variance(M, eta, o, 0, 1,
+                                                    phi=ph) for o in om])
+        v_an = np.array([output_quadrature_variance(
+            M, eta, o, 0, 1, phi=ph + np.pi / 2.0) for o in om])
+        if jitter:
+            t = float(p["theta_rms"])
+            v_sq, v_an = (jitter_average(v_sq, v_an, t),
+                          jitter_average(v_an, v_sq, t))
+        d = float(p.get("dark", 0.0))
+        return {"squeezed": v_sq + d, "anti": v_an + d}
+
+    return names, model
+
+
+def molecule_spectra_model(port="aux", detuned=False):
+    """Two-ring photonic molecule model for `fit_spectra_model`.
+
+    Parameters: mu (gain on the main ring), J (inter-ring coupling),
+    gamma (auxiliary ring decay), all in units of the main ring's
+    kappa/2; eta (fraction of the monitored ring's decay reaching the
+    detector); kappa_hz (main ring linewidth, FWHM in Hz).
+    port : "main" (read at the main ring: squeezed at phi = pi/2) or
+    "aux" (read at the auxiliary ring, where the hop turns the
+    squeezed quadrature to phi = 0; see `photonic_molecule`).
+    detuned : also delta_a, delta_b (detunings of the two rings) and
+    phi_sq (LO angle of the squeezed trace; the antisqueezed trace is
+    read at phi_sq + pi/2). Without it both detunings are 0 and the
+    traces are read at the fixed angles above, which is only right
+    for a molecule on resonance.
+    """
+    from .molecule import output_variance_ports, photonic_molecule
+    if port not in ("main", "aux"):
+        raise ValueError("port must be 'main' or 'aux'")
+    names = ["mu", "J", "gamma", "eta", "kappa_hz"] + (
+        ["delta_a", "delta_b", "phi_sq"] if detuned else [])
+    pm = 0 if port == "main" else 1
+    ph0 = np.pi / 2.0 if port == "main" else 0.0
+
+    def model(p, f_hz):
+        M, g = photonic_molecule(float(p["mu"]), float(p["J"]),
+                                 float(p.get("delta_a", 0.0)),
+                                 float(p.get("delta_b", 0.0)),
+                                 float(p["gamma"]))
+        om = 4.0 * np.pi * np.asarray(f_hz, dtype=float) / (
+            2.0 * np.pi * float(p["kappa_hz"]))
+        eta = float(p["eta"])
+        ph_sq = float(p["phi_sq"]) if detuned else ph0
+        v_sq = np.array([output_variance_ports(M, g, eta, pm, o,
+                                               phi=ph_sq) for o in om])
+        v_an = np.array([output_variance_ports(
+            M, g, eta, pm, o, phi=ph_sq + np.pi / 2.0) for o in om])
+        return {"squeezed": v_sq, "anti": v_an}
+
+    return names, model
+
+
+@dataclasses.dataclass
+class ModelFit:
+    """Result of `fit_spectra_model`.
+
+    params : all parameters (fitted and fixed); sigma : 1-sigma
+    uncertainties of the fitted ones; correlation : their correlation
+    matrix (order of `fitted`); fitted : names of the fitted parameters;
+    chi2, chi2_dof : with measurement sigmas; model_db : fitted curves
+    (dB re shot noise) for each supplied trace.
+    """
+
+    params: dict
+    sigma: dict
+    correlation: np.ndarray
+    fitted: list
+    chi2: float | None
+    chi2_dof: int | None
+    model_db: dict
+
+
+def fit_spectra_model(f_hz, data_db, model, names, p0, bounds=None,
+                      fixed=None, sigma_db=None, cond_max=1e10,
+                      n_starts=6, seed=0):
+    """Least-squares fit of any spectrum model, with an
+    identifiability check.
+
+    f_hz : analysis frequencies (Hz, positive).
+    data_db : dict trace-name -> measured trace in dB re shot noise
+        (e.g. {"squeezed": ..., "anti": ...}); the model must return the
+        same names.
+    model, names : from `parametric_spectra_model`,
+        `molecule_spectra_model`, or your own function
+        model(params_dict, f_hz) -> dict of variances (vacuum 0.5).
+    p0 : dict of starting values for every parameter not in `fixed`.
+    bounds : dict name -> (low, high) (default unbounded).
+    fixed : dict name -> value for parameters held fixed.
+    sigma_db : scalar or per-point 1-sigma of the traces (dB).
+    cond_max : largest allowed condition number of the scaled
+        information matrix; beyond it the data do not determine the
+        parameters separately and the fit refuses.
+    n_starts, seed : the fit is repeated from p0 and from n_starts - 1
+        seeded random starting points (uniform inside finite bounds,
+        log-uniform for wide positive ranges, a factor of about e^0.5
+        around p0 otherwise). If two starts end on fits that are
+        equally good but clearly different, the data admit more than
+        one answer (a discrete ambiguity that no local error bar can
+        show) and the fit refuses, listing them.
+    """
+    f = np.asarray(f_hz, dtype=float).ravel()
+    if f.size < 3 or np.any(f <= 0.0) or not np.all(np.isfinite(f)):
+        raise ValueError("need >= 3 positive, finite analysis "
+                         "frequencies")
+    fixed = dict(fixed or {})
+    bounds = dict(bounds or {})
+    free = [nm for nm in names if nm not in fixed]
+    missing = [nm for nm in free if nm not in p0]
+    if missing:
+        raise ValueError(f"no starting value for {missing}")
+    unknown = [nm for nm in list(fixed) + list(p0) if nm not in names]
+    if unknown:
+        raise ValueError(f"not parameters of this model: {unknown}")
+    if not data_db:
+        raise ValueError("provide at least one trace")
+    data = {}
+    for k, v in data_db.items():
+        arr = np.asarray(v, dtype=float).ravel()
+        if arr.shape != f.shape or not np.all(np.isfinite(arr)):
+            raise ValueError(f"trace {k!r} must match f_hz and be finite")
+        data[k] = arr
+    n_data = f.size * len(data)
+    if n_data <= len(free):
+        raise ValueError("more free parameters than data points")
+    if sigma_db is None:
+        w = 1.0
+    else:
+        sig = np.broadcast_to(np.asarray(sigma_db, dtype=float),
+                              f.shape).copy()
+        if np.any(sig <= 0.0) or not np.all(np.isfinite(sig)):
+            raise ValueError("sigma_db must be finite and positive")
+        w = 1.0 / sig
+    lo = [bounds.get(nm, (-np.inf, np.inf))[0] for nm in free]
+    hi = [bounds.get(nm, (-np.inf, np.inf))[1] for nm in free]
+    x0 = np.array([float(p0[nm]) for nm in free])
+    scale = np.where(np.abs(x0) > 0, np.abs(x0), 1.0)
+
+    def full(x):
+        p = dict(fixed)
+        p.update(zip(free, x * scale))
+        return p
+
+    def resid(x):
+        p = full(x)
+        try:
+            out = model(p, f)
+        except ValueError:
+            # outside the model's physical domain (e.g. unstable): a
+            # large constant penalty keeps the optimizer away
+            return np.full(n_data, 1e6)
+        r = []
+        for k in data:
+            v = np.asarray(out[k], dtype=float)
+            if np.any(v <= 0):
+                return np.full(n_data, 1e6)
+            r.append(w * (10.0 * np.log10(v / _VAC) - data[k]))
+        return np.concatenate(r)
+
+    lo_s, hi_s = np.array(lo) / scale, np.array(hi) / scale
+    rng = np.random.default_rng(int(seed))
+    starts = [x0 / scale]
+    for _ in range(max(int(n_starts), 1) - 1):
+        x = np.empty(len(free))
+        for i in range(len(free)):
+            a, b = lo[i], hi[i]
+            if np.isfinite(a) and np.isfinite(b):
+                if a > 0 and b / a > 100:
+                    x[i] = np.exp(rng.uniform(np.log(a), np.log(b)))
+                else:
+                    x[i] = rng.uniform(a, b)
+            else:
+                x[i] = x0[i] * np.exp(rng.normal(0.0, 0.5)) if x0[i] \
+                    else rng.normal(0.0, 1.0)
+            x[i] = min(max(x[i], a), b)
+        starts.append(x / scale)
+    runs = []
+    for xs in starts:
+        xs = np.clip(xs, lo_s, hi_s)
+        r = least_squares(resid, xs, bounds=(lo_s, hi_s), xtol=1e-15,
+                          ftol=1e-15, gtol=1e-15, x_scale="jac")
+        if r.success and np.all(np.isfinite(r.x)):
+            runs.append(r)
+    if not runs:
+        raise RuntimeError("spectrum fit failed from every start")
+    runs.sort(key=lambda r: r.cost)
+    res = runs[0]
+    J = res.jac                                # in scaled coordinates
+    sv = np.linalg.svd(J, compute_uv=False)
+    if sv[-1] <= 0 or (sv[0] / sv[-1]) ** 2 > float(cond_max):
+        _, _, Vt = np.linalg.svd(J)
+        weak = Vt[-1]
+        order = np.argsort(np.abs(weak))[::-1]
+        combo = ", ".join(f"{weak[i]:+.2f} {free[i]}" for i in order
+                          if abs(weak[i]) > 0.1)
+        raise ValueError(
+            "the data do not determine these parameters separately "
+            f"(the combination [{combo}] is unconstrained). Fix some "
+            "parameters from independent measurements, or add traces "
+            "or frequencies that separate them")
+    cov = np.linalg.inv(J.T @ J)
+    rss = float(2.0 * res.cost)
+    dof = n_data - len(free)
+    if sigma_db is None:
+        cov = cov * (rss / dof)
+        chi2 = chi2_dof = None
+    else:
+        chi2, chi2_dof = rss, dof
+    cov = cov * np.outer(scale, scale)
+    sd = np.sqrt(np.diag(cov))
+    best = res.x * scale
+    tol_cost = 1e-6 * res.cost + 1e-20 * n_data
+    alts = []
+    for r in runs[1:]:
+        if r.cost - res.cost > tol_cost:
+            continue
+        other = r.x * scale
+        gap = np.abs(other - best)
+        if np.any(gap > np.maximum(3.0 * sd, 1e-6 * np.abs(best) + 1e-12)):
+            alts.append(other)
+    if alts:
+        show = "; ".join(
+            "{" + ", ".join(f"{nm}={v:.6g}" for nm, v in zip(free, x)) + "}"
+            for x in [best] + alts[:2])
+        raise ValueError(
+            "the data are fitted equally well by clearly different "
+            f"parameter sets: {show}. The measurement cannot decide "
+            "between them; fix a parameter from an independent "
+            "measurement or add data that separates them")
+    den = np.outer(sd, sd)
+    corr = np.divide(cov, den, out=np.zeros_like(cov), where=den > 0)
+    np.fill_diagonal(corr, 1.0)
+    params = full(res.x)
+    out = model(params, f)
+    return ModelFit(params={k: float(v) for k, v in params.items()},
+                    sigma={nm: float(v) for nm, v in zip(free, sd)},
+                    correlation=corr, fitted=free, chi2=chi2,
+                    chi2_dof=chi2_dof,
+                    model_db={k: 10.0 * np.log10(np.asarray(out[k])
+                                                 / _VAC) for k in data})

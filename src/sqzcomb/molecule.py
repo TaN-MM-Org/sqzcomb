@@ -40,8 +40,29 @@ Exact facts this module's test suite asserts, rather than states:
 What this module does not do: it is a two-mode model, not the full
 multimode comb molecule of the accompanying manuscript; the paper
 repository reproduces that study.
+
+Rings with different line spacings (new in 0.13,
+`vernier_molecule_fluctuation_matrix`). When the auxiliary ring's free
+spectral range differs from the main ring's, its lines slide past the
+main ring's comb (a Vernier pattern): a main line may have no auxiliary
+line near it, one, or several, and an auxiliary line is near at most
+one main line. Written in the frame where main line k sits at
+frequency k * fsr (fsr = the main ring's free spectral range in units
+of kappa/2), an auxiliary line at frequency nu_b is stationary only
+when referred to the main line it is paired with; its detuning is
+then aux_delta = k * fsr - nu_b (the same sign as `aux_delta` and
+`delta_b` above: positive when the auxiliary line sits below the
+frame). Its coupling to every other main line oscillates at least
+(fsr - |aux_delta|) faster than the coupling J and is dropped (the
+rotating-wave approximation); the builder refuses when that margin is
+not large (see `rwa_ratio`), rather than silently keeping a wrong
+model. The tests hold the construction to the exact (all-pairs,
+no-approximation) model of a passive pair of rings, which is
+time-independent in the laboratory frame.
 """
 from __future__ import annotations
+
+import math
 
 import numpy as np
 
@@ -127,13 +148,14 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     u = np.zeros(m2, dtype=complex)
     w = 1.0 / np.sqrt(2.0 * reads.size)
     for idx in reads:
-        u[idx] += np.exp(-1j * phi) * w
-        u[n + idx] += np.exp(1j * phi) * w
+        # u^dag z = X_phi = cos(phi) x + sin(phi) p (see spectra.py)
+        u[idx] += np.exp(1j * phi) * w
+        u[n + idx] += np.exp(-1j * phi) * w
     return float(np.real(u.conj() @ S @ u))
 
 
 def molecule_fluctuation_matrix(psi_s, alpha, J, gamma_b, dispersion=(0.0,),
-                                aux_delta=0.0, modes=None):
+                                aux_delta=0.0, modes=None, d1=0.0):
     """Multimode comb molecule: LLE fluctuations + per-line auxiliary modes.
 
     Every retained comb line k of the main ring (linearized around the
@@ -154,11 +176,13 @@ def molecule_fluctuation_matrix(psi_s, alpha, J, gamma_b, dispersion=(0.0,),
     J may be a scalar or an array over the retained modes (per-line
     coupling). At a single retained line this construction reduces
     exactly to `photonic_molecule` with mu = i psi_s^2, which the test
-    suite asserts against the released two-ring code.
+    suite asserts against the released two-ring code. For rings whose
+    line spacings differ, use `vernier_molecule_fluctuation_matrix`.
     """
     if gamma_b <= 0.0:
         raise ValueError("gamma_b must be positive")
-    M_main, modes = fluctuation_matrix(psi_s, alpha, dispersion, modes)
+    M_main, modes = fluctuation_matrix(psi_s, alpha, dispersion, modes,
+                                       d1=d1)
     m = modes.size
     A_main = M_main[:m, :m]
     B_main = M_main[:m, m:]
@@ -175,6 +199,106 @@ def molecule_fluctuation_matrix(psi_s, alpha, J, gamma_b, dispersion=(0.0,),
                   [np.conj(B_joint), np.conj(A_joint)]])
     gammas = np.concatenate([np.ones(m), np.full(m, float(gamma_b))])
     return M, gammas, modes
+
+
+def ring_line_frequencies(mode_numbers, offset, fsr, dispersion=()):
+    """Line frequencies of a ring, in units of the main ring's kappa/2,
+    measured from the pump:
+
+        nu(l) = offset + fsr * l + sum_m (D_m / m!) l^m   (m = 2, 3, ...)
+
+    offset : frequency of line l = 0; fsr : line spacing; dispersion :
+    (D_2, D_3, ...) of this ring in the same units, with the physical
+    sign (D_2 > 0 for anomalous dispersion: the lines spread apart).
+    Convert laboratory numbers with `sqzcomb.physical.normalized_frequency`
+    (a frequency in Hz divided by kappa/2 of the main ring).
+    """
+    ell = np.asarray(mode_numbers, dtype=float)
+    nu = float(offset) + float(fsr) * ell
+    for m, Dm in enumerate(dispersion, start=2):
+        nu = nu + float(Dm) / math.factorial(m) * ell ** m
+    return nu
+
+
+def vernier_molecule_fluctuation_matrix(psi_s, alpha, J, gamma_b, fsr,
+                                        aux_frequencies, dispersion=(0.0,),
+                                        modes=None, d1=0.0, window=None,
+                                        rwa_ratio=20.0):
+    """Comb molecule whose auxiliary ring has its own line spacing.
+
+    psi_s, alpha, dispersion, modes, d1 : the main ring, exactly as in
+        `fluctuation_matrix`.
+    fsr : the main ring's free spectral range in units of kappa/2
+        (FSR / (kappa / 2), with both in the same units; a large number
+        for a real ring).
+    aux_frequencies : frequencies nu_b of the auxiliary ring's lines in
+        the same units, measured from the pump (e.g. from
+        `ring_line_frequencies`).
+    J : coupling rate, a scalar or one value per auxiliary line;
+    gamma_b : amplitude decay of the auxiliary lines (units of the main
+        ring's kappa/2).
+    window : keep only auxiliary lines with |aux_delta| <= window
+        (default: all whose partner is retained). Lines far from any main
+        line matter only through shifts of order J^2 / |aux_delta|.
+    rwa_ratio : refuse when an auxiliary line's detuning from the
+        second-nearest main line, fsr - |aux_delta|, is below
+        rwa_ratio * max(J, gamma_b, 1).
+
+    Each auxiliary line is paired with its nearest main line k (rounding
+    nu_b / fsr) and enters with aux_delta = k * fsr - nu_b. Returns
+    (M, gammas, modes, aux) with the joint ordering (main lines, then
+    the kept auxiliary lines, then conjugates) that
+    `output_variance_ports` expects; aux is a dict of arrays: index
+    (position in aux_frequencies), partner (main mode number),
+    aux_delta and J of every kept auxiliary line, in basis order.
+    """
+    if gamma_b <= 0.0:
+        raise ValueError("gamma_b must be positive")
+    fsr = float(fsr)
+    if not (np.isfinite(fsr) and fsr > 0.0):
+        raise ValueError("fsr must be finite and positive")
+    nu_b = np.atleast_1d(np.asarray(aux_frequencies, dtype=float))
+    if not np.all(np.isfinite(nu_b)):
+        raise ValueError("aux_frequencies must be finite")
+    Jall = np.broadcast_to(np.asarray(J, dtype=float), nu_b.shape)
+    M_main, modes = fluctuation_matrix(psi_s, alpha, dispersion, modes,
+                                       d1=d1)
+    m = modes.size
+    A_main = M_main[:m, :m]
+    B_main = M_main[:m, m:]
+
+    partner = np.rint(nu_b / fsr).astype(int)
+    delta = partner * fsr - nu_b
+    keep = np.isin(partner, modes)
+    if window is not None:
+        keep &= np.abs(delta) <= float(window)
+    idx = np.nonzero(keep)[0]
+    margin = fsr - np.abs(delta[idx])
+    scale = np.maximum(np.maximum(np.abs(Jall[idx]), float(gamma_b)), 1.0)
+    bad = margin < float(rwa_ratio) * scale
+    if np.any(bad):
+        j = int(idx[np.argmax(bad)])
+        raise ValueError(
+            f"auxiliary line {j} (nu_b = {nu_b[j]:g}) is only "
+            f"{fsr - abs(delta[j]):g} from its second-nearest main line, "
+            "not far enough for the rotating-wave pairing; the lines are "
+            "too close to midway between two main lines (or the rings "
+            "too strongly coupled) for this model")
+    p = idx.size
+    pos = {int(k): i for i, k in enumerate(modes)}
+    C_ab = np.zeros((m, p), dtype=complex)
+    for col, j in enumerate(idx):
+        C_ab[pos[int(partner[j])], col] = -1j * Jall[j]
+    A_aux = np.diag(-float(gamma_b) + 1j * delta[idx])
+    A_joint = np.block([[A_main, C_ab], [C_ab.T, A_aux]])
+    B_joint = np.zeros((m + p, m + p), dtype=complex)
+    B_joint[:m, :m] = B_main
+    M = np.block([[A_joint, B_joint],
+                  [np.conj(B_joint), np.conj(A_joint)]])
+    gammas = np.concatenate([np.ones(m), np.full(p, float(gamma_b))])
+    aux = {"index": idx, "partner": partner[idx], "aux_delta": delta[idx],
+           "J": np.array(Jall[idx])}
+    return M, gammas, modes, aux
 
 
 def molecule_threshold(J, gamma):
