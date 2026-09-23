@@ -80,3 +80,82 @@ def test_published_pair_runs_sanely():
     assert 0.0 < out["eta"] < 1.0
     assert out["sq_db_source"] < -1.71        # source beats detected
     assert abs(out["v_s"] * out["v_a"] - 0.25) < 1e-9
+
+
+# --- impure sources and phase jitter (0.13) ------------------------------
+
+def _measure(r, P, eta, theta):
+    from sqzcomb.detection import phase_noise_variance
+    v_s, v_a = VAC / P * np.exp(-2.0 * r), VAC / P * np.exp(2.0 * r)
+    S = detected_variance(v_s, efficiency=eta)
+    A = detected_variance(v_a, efficiency=eta)
+    return (squeezing_db(phase_noise_variance(S, A, theta)),
+            squeezing_db(phase_noise_variance(A, S, theta)), v_s, v_a)
+
+
+def test_pure_default_is_unchanged_digit_for_digit():
+    for r, eta in ((0.4, 0.3), (1.2, 0.8)):
+        s_db, a_db = _pair_db(r, eta)
+        a = infer_source(s_db, a_db)
+        b = infer_source(s_db, a_db, purity=1.0, theta_rms=0.0)
+        assert a == b
+
+
+def test_impure_jittered_round_trip():
+    # known purity and jitter: the inversion must return the generating
+    # efficiency and source exactly (on the right branch when the
+    # answer is two-valued, which the function must then flag)
+    n_amb = 0
+    for r in (0.3, 0.8, 1.5):
+        for P in (1.0, 0.9, 0.6, 0.3):
+            for eta in (0.2, 0.5, 0.9, 1.0):
+                for th in (0.0, 0.05, 0.15):
+                    s_db, a_db, v_s, v_a = _measure(r, P, eta, th)
+                    if s_db >= 0.0:
+                        continue            # no squeezing left to see
+                    try:
+                        outs = [infer_source(s_db, a_db, purity=P,
+                                             theta_rms=th)]
+                    except ValueError as exc:
+                        assert "two efficiencies" in str(exc)
+                        n_amb += 1
+                        outs = [infer_source(s_db, a_db, purity=P,
+                                             theta_rms=th, branch=b)
+                                for b in ("low", "high")]
+                    o = min(outs, key=lambda o: abs(o["eta"] - eta))
+                    assert o["eta"] == pytest.approx(eta, abs=1e-9)
+                    assert o["v_s"] == pytest.approx(v_s, rel=1e-9)
+                    assert o["v_s"] * o["v_a"] == pytest.approx(
+                        0.25 / P ** 2, rel=1e-9)
+    assert n_amb > 0      # the two-valued case is real, not hypothetical
+
+
+def test_assuming_purity_flatters_the_source():
+    # true source: purity 0.7; the pure-state inference of the same
+    # measurement reports lower efficiency and stronger squeezing
+    s_db, a_db, v_s, _ = _measure(1.0, 0.7, 0.6, 0.0)
+    pure = infer_source(s_db, a_db)
+    true = infer_source(s_db, a_db, purity=0.7)
+    assert true["eta"] == pytest.approx(0.6, abs=1e-9)
+    assert pure["eta"] < true["eta"]
+    assert pure["sq_db_source"] < true["sq_db_source"] - 1.0
+
+
+def test_jitter_and_purity_refusals():
+    s_db, a_db = _pair_db(1.0, 0.7)
+    with pytest.raises(ValueError, match="jitter"):
+        infer_source(s_db, a_db, theta_rms=1.0)
+    with pytest.raises(ValueError, match="purity"):
+        infer_source(s_db, a_db, purity=0.0)
+    with pytest.raises(ValueError, match="branch"):
+        infer_source(s_db, a_db, branch="middle")
+    with pytest.raises(ValueError, match="theta_rms"):
+        infer_source(s_db, a_db, theta_rms=-0.1)
+
+
+def test_purity_near_one_is_continuous():
+    # the quadratic must not lose accuracy as the purity approaches 1
+    ref = infer_source(-1.71, 5.54)
+    for P in (1 - 1e-6, 1 - 1e-12, 1 - 1e-15):
+        out = infer_source(-1.71, 5.54, purity=P)
+        assert out["eta"] == pytest.approx(ref["eta"], rel=1e-5)
