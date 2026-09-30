@@ -66,7 +66,8 @@ import math
 
 import numpy as np
 
-from .linearize import fluctuation_matrix, is_stable
+from .linearize import fluctuation_matrix
+from .spectra import _bath_covariance, _check_spectra_stability
 
 
 def photonic_molecule(mu, J, delta_a=0.0, delta_b=0.0, gamma=1.0):
@@ -86,7 +87,8 @@ def photonic_molecule(mu, J, delta_a=0.0, delta_b=0.0, gamma=1.0):
 
 
 def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
-                          mode_index=None):
+                          mode_index=None, n_th_port=0.0, n_th_loss=0.0,
+                          allow_marginal=False):
     """Detected quadrature variance with per-mode decay rates.
 
     The monitored bus couples to `port_mode` (an int, or a sequence of
@@ -104,18 +106,41 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     modes, the twin-beam variable (a + b)/sqrt(2) rotated by phi).
     Detection must be on monitored modes: a detector on the bus cannot
     see light that never enters the bus.
+
+    n_th_port, n_th_loss (new in 0.14) : Bose occupations of the bus
+        input and of every other decay channel (default vacuum), as in
+        `output_quadrature_variance`.
+    allow_marginal (new in 0.14) : the stability test is now the one
+        of `output_quadrature_variance`: a largest eigenvalue real part
+        within 1e-6 of zero is marginal (as around a soliton, or exactly
+        at threshold) and is accepted only with allow_marginal=True.
+        Before 0.14 this function accepted any value below zero (for
+        example -4.9e-32 from rounding exactly at threshold) and refused
+        the rest as "above threshold".
+    Mode indices must be integers in [0, n) (a negative index used to
+    land on the conjugate half of the doubled vector and read the
+    quadrature at -phi).
     """
     gammas = np.asarray(gammas, dtype=float)
     n = gammas.size
     if not (0.0 <= eta <= 1.0):
         raise ValueError("eta must lie in [0, 1]")
-    if not is_stable(M):
-        raise ValueError("drift matrix is unstable (above threshold); "
-                         "linearized spectra are meaningless there")
-    ports = np.atleast_1d(np.asarray(port_mode, dtype=int))
+    if float(n_th_port) < 0.0 or float(n_th_loss) < 0.0:
+        raise ValueError("thermal occupations must be non-negative")
+    M = np.asarray(M, dtype=complex)
+    if M.shape != (2 * n, 2 * n):
+        raise ValueError("M and gammas disagree on the number of modes")
+    _check_spectra_stability(M, allow_marginal)
+    ports = np.atleast_1d(np.asarray(port_mode))
     if mode_index is None:
         mode_index = port_mode
-    reads = np.atleast_1d(np.asarray(mode_index, dtype=int))
+    reads = np.atleast_1d(np.asarray(mode_index))
+    for arr in (ports, reads):
+        if arr.size == 0 or not np.all(np.equal(np.mod(arr, 1), 0)) \
+                or np.any(arr < 0) or np.any(arr >= n):
+            raise ValueError(f"mode indices must be integers in [0, {n})")
+    ports = ports.astype(int)
+    reads = reads.astype(int)
     if not np.all(np.isin(reads, ports)):
         raise ValueError("mode_index must be one of the monitored port "
                          "modes; a detector on the bus cannot see light "
@@ -141,9 +166,11 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     T_port = C_port @ G @ C_port - ident
     T_loss = C_port @ G @ C_loss
 
-    N = np.zeros((m2, m2), dtype=complex)   # vacuum <z z^dagger>
-    N[:n, :n] = np.eye(n)
-    S = T_port @ N @ T_port.conj().T + T_loss @ N @ T_loss.conj().T
+    # <z_in z_in^dagger> of the bus input and of the loss baths
+    N_port = _bath_covariance(m2, n_th_port)
+    N_loss = _bath_covariance(m2, n_th_loss)
+    S = T_port @ N_port @ T_port.conj().T \
+        + T_loss @ N_loss @ T_loss.conj().T
 
     u = np.zeros(m2, dtype=complex)
     w = 1.0 / np.sqrt(2.0 * reads.size)
@@ -310,7 +337,7 @@ def molecule_threshold(J, gamma):
     precedes the oscillatory one, i.e. for J <= gamma; beyond that the
     Hopf boundary mu_th = 1 + gamma takes over. Both branches follow
     from the 2x2 sector matrix [[-1 + mu, J], [-J, -gamma]] and are
-    asserted against `is_stable` in the test suite.
+    asserted against `sqzcomb.linearize.is_stable` in the test suite.
     """
     if gamma <= 0.0:
         raise ValueError("gamma must be positive")

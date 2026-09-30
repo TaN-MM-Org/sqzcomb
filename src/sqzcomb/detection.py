@@ -26,7 +26,32 @@ it.
 Electronic noise enters as an additive variance V_dark on the
 shot-noise-normalized signal; `dark_from_clearance_db` converts the
 number a datasheet or a spectrum analyzer actually gives (dark
-clearance below shot noise, in dB) into that variance.
+clearance below shot noise, in dB) into that variance. Mind which
+clearance you have: by default it is measured from the pure shot-noise
+level; the gap between an analyzer's shot-noise trace (which also
+carries the dark noise) and its dark trace needs `trace_gap=True`.
+
+Which shot-noise level the result is quoted against matters once
+there is dark noise (new in 0.14, `dark_in_reference`). By default the
+signal carries V_dark and the reference is the pure vacuum level 1/2,
+the convention of every earlier version. In a laboratory, though, the
+shot-noise reference is itself a trace taken through the same
+receiver, so it carries the dark noise too, and the ratio of the two
+traces is
+
+    V_meas = (1/2) (V_det + V_dark) / (1/2 + V_dark),
+    V_det = eta V + (1 - eta)/2.
+
+That is again a loss: V_meas = eta_e V_det + (1 - eta_e)/2 with
+eta_e = (1/2) / (1/2 + V_dark) (`dark_equivalent_efficiency`), the
+equivalence of electronic noise and optical loss shown by J. Appel,
+D. Hoffman, E. Figueroa and A. I. Lvovsky, Phys. Rev. A 75, 035802
+(2007), for a detector calibrated on the vacuum noise. (The formula
+for eta_e above is derived here from the two-trace ratio and checked
+in the tests.) Pass `dark_in_reference=True` to get that number; the
+default reads slightly LESS squeezing (for 10 dB of source squeezing
+seen with eta = 0.7 and a 15 dB dark clearance: -3.962 dB by default,
+-4.097 dB against a shot trace that carries the dark noise).
 
 Exact facts the test suite asserts, rather than states:
 
@@ -50,7 +75,24 @@ def _check_eta(eta):
     return eta
 
 
-def detected_variance(variance, efficiency=1.0, dark_noise=0.0):
+def _check_dark(dark_noise):
+    dark = float(dark_noise)
+    if not (np.isfinite(dark) and dark >= 0.0):
+        raise ValueError("dark_noise must be finite and non-negative")
+    return dark
+
+
+def dark_equivalent_efficiency(dark_noise):
+    """The loss that dark noise is equivalent to when the result is
+    quoted against a shot-noise trace taken through the same receiver:
+    eta_e = (1/2) / (1/2 + V_dark) (see the module docstring; Appel et
+    al., Phys. Rev. A 75, 035802 (2007)). V_dark in vacuum units, e.g.
+    from `dark_from_clearance_db`."""
+    return VACUUM_VARIANCE / (VACUUM_VARIANCE + _check_dark(dark_noise))
+
+
+def detected_variance(variance, efficiency=1.0, dark_noise=0.0,
+                      dark_in_reference=False):
     """Quadrature variance after loss and electronic noise.
 
     variance : port quadrature variance(s), vacuum = 0.5 (scalar or
@@ -59,39 +101,68 @@ def detected_variance(variance, efficiency=1.0, dark_noise=0.0):
         the product of path transmission and diode quantum efficiency.
     dark_noise : additive electronic-noise variance in vacuum units
         (see `dark_from_clearance_db`); must be >= 0.
+    dark_in_reference : False (default, as before): returns
+        eta * V + (1 - eta)/2 + V_dark, the signal against the pure
+        vacuum level. True: the signal as a spectrum analyzer reports
+        it against a shot-noise trace that carries the same dark
+        noise, (1/2) (eta V + (1 - eta)/2 + V_dark) / (1/2 + V_dark),
+        which is the loss `dark_equivalent_efficiency` applied after
+        eta (see the module docstring).
 
-    Returns eta * V + (1 - eta)/2 + V_dark, elementwise.
+    Elementwise on arrays.
     """
     eta = _check_eta(efficiency)
-    dark = float(dark_noise)
-    if dark < 0.0:
-        raise ValueError("dark_noise must be non-negative")
+    dark = _check_dark(dark_noise)
     V = np.asarray(variance, dtype=float)
     if np.any(V < 0.0):
         raise ValueError("a quadrature variance cannot be negative")
     out = eta * V + (1.0 - eta) * VACUUM_VARIANCE + dark
+    if dark_in_reference:
+        out = VACUUM_VARIANCE * out / (VACUUM_VARIANCE + dark)
     return float(out) if np.isscalar(variance) else out
 
 
-def detected_squeezing_db(variance, efficiency=1.0, dark_noise=0.0):
-    """Detected squeezing in dB relative to vacuum, after degradation."""
-    V = detected_variance(variance, efficiency, dark_noise)
+def detected_squeezing_db(variance, efficiency=1.0, dark_noise=0.0,
+                          dark_in_reference=False):
+    """Detected squeezing in dB relative to shot noise, after
+    degradation (see `detected_variance` for `dark_in_reference`)."""
+    V = detected_variance(variance, efficiency, dark_noise,
+                          dark_in_reference)
     return 10.0 * np.log10(np.asarray(V, dtype=float) / VACUUM_VARIANCE)
 
 
-def dark_from_clearance_db(clearance_db):
+def dark_from_clearance_db(clearance_db, trace_gap=False):
     """Electronic-noise variance from dark clearance below shot noise.
 
-    A receiver whose dark noise sits `clearance_db` dB below the shot
-    noise level contributes V_dark = 0.5 * 10^(-clearance_db / 10) in
-    vacuum units. 10 dB of clearance is V_dark = 0.05: enough to turn
-    10 dB of otherwise perfectly detected squeezing into about 7 dB,
-    which is why the number matters.
+    Two ways of reading "clearance" are in use, and they differ:
+
+    trace_gap=False (default, as in every earlier version): the dark
+        noise sits `clearance_db` dB below the PURE shot-noise level
+        (the shot noise alone, without the receiver's own noise), so
+        V_dark = 0.5 * 10^(-clearance_db / 10) in vacuum units. 10 dB
+        of clearance is V_dark = 0.05: enough to turn 10 dB of
+        otherwise perfectly detected squeezing into about 7 dB, which
+        is why the number matters.
+    trace_gap=True (new in 0.14): `clearance_db` is the gap an analyzer
+        shows between the shot-noise trace and the dark trace. The shot
+        trace carries the dark noise too, so the gap is 10 log10((0.5 +
+        V_dark) / V_dark) and V_dark = 0.5 / (10^(clearance_db / 10) -
+        1). This is the convention of `lab.shot_noise_normalize`, whose
+        `dark_variance` it reproduces (tested). A 15 dB trace gap gives
+        V_dark = 0.01633; the default reading of 15 dB gives 0.01581.
+        The gap must be positive.
     """
     c = float(clearance_db)
+    if np.isnan(c):
+        raise ValueError("clearance must be a number of dB, not NaN")
     if c < 0.0:
         raise ValueError("clearance is measured below shot noise and "
                          "must be non-negative dB")
+    if trace_gap:
+        if c <= 0.0:
+            raise ValueError("a trace gap of 0 dB means the dark noise "
+                             "is all there is; it must be positive")
+        return VACUUM_VARIANCE / np.expm1(c * np.log(10.0) / 10.0)
     return VACUUM_VARIANCE * 10.0 ** (-c / 10.0)
 
 
@@ -126,7 +197,9 @@ def lossy_channel_xxpp(sigma, efficiency, hbar=2.0):
     return 0.5 * (out + out.T)
 
 
-def required_efficiency(target_variance, source_variance):
+def required_efficiency(target_variance, source_variance, dark_noise=0.0,
+                        v_antisqueezed=None, theta_rms=0.0,
+                        dark_in_reference=False):
     """Minimum efficiency that still delivers a target variance.
 
     Inverts V_det = eta V + (1 - eta)/2 (loss only, no dark noise) for
@@ -136,23 +209,76 @@ def required_efficiency(target_variance, source_variance):
         eta = (1/2 - V_target) / (1/2 - V_source),
 
     is the loss budget of a squeezing experiment in one line.
+
+    The whole budget (new in 0.14, all optional): with dark noise
+    V_dark and LO phase jitter theta_rms (which needs the antisqueezed
+    variance v_antisqueezed of the source), the detected variance is
+    eta V_j + (1 - eta)/2 + V_dark with V_j = `phase_noise_variance`
+    (V_source, v_antisqueezed, theta_rms) (jitter and loss commute),
+    still linear in eta, so
+
+        eta = (1/2 + V_dark - V_target) / (1/2 - V_j)
+
+    exactly; with `dark_in_reference=True` (see `detected_variance`)
+    the dark noise is the extra loss eta_e = 1/2 / (1/2 + V_dark) and
+    eta = (1/2 - V_target) / ((1/2 - V_j) eta_e). A target that even
+    eta = 1 cannot reach with this dark noise and jitter is refused,
+    with the best value that is reachable. The defaults give the
+    formula above unchanged.
     """
     Vt = float(target_variance)
     Vs = float(source_variance)
+    dark = _check_dark(dark_noise)
+    th = float(theta_rms)
+    if not (np.isfinite(th) and th >= 0.0):
+        raise ValueError("theta_rms must be finite and >= 0")
     if not 0.0 <= Vs < VACUUM_VARIANCE:
         raise ValueError("source must be squeezed: 0 <= V < 0.5")
-    if not Vs <= Vt < VACUUM_VARIANCE:
-        raise ValueError("target must satisfy V_source <= V_target "
-                         "< 0.5; loss cannot improve squeezing")
-    return (VACUUM_VARIANCE - Vt) / (VACUUM_VARIANCE - Vs)
+    if th > 0.0:
+        if v_antisqueezed is None:
+            raise ValueError("phase jitter mixes in the antisqueezed "
+                             "quadrature: give v_antisqueezed")
+        Va = float(v_antisqueezed)
+        if not Va > Vs:
+            raise ValueError("need v_antisqueezed > source_variance")
+        Vj = phase_noise_variance(Vs, Va, th)
+        if not Vj < VACUUM_VARIANCE:
+            raise ValueError(
+                f"with {th:g} rad of jitter the source reads {Vj:.4g} "
+                ">= 0.5 before any loss: no efficiency gives squeezing")
+    else:
+        Vj = Vs
+    if dark == 0.0 and th == 0.0:
+        if not Vs <= Vt < VACUUM_VARIANCE:
+            raise ValueError("target must satisfy V_source <= V_target "
+                             "< 0.5; loss cannot improve squeezing")
+        return (VACUUM_VARIANCE - Vt) / (VACUUM_VARIANCE - Vs)
+    best = detected_variance(Vj, 1.0, dark, dark_in_reference)
+    if not best <= Vt < VACUUM_VARIANCE:
+        raise ValueError(
+            f"target {Vt:.6g} must satisfy {best:.6g} <= V_target < 0.5: "
+            f"{best:.6g} is what this source gives at efficiency 1 with "
+            "this dark noise and jitter, and loss cannot improve on it")
+    if dark_in_reference:
+        eta = (VACUUM_VARIANCE - Vt) / ((VACUUM_VARIANCE - Vj)
+                                        * dark_equivalent_efficiency(dark))
+    else:
+        eta = (VACUUM_VARIANCE + dark - Vt) / (VACUUM_VARIANCE - Vj)
+    return float(min(eta, 1.0))
 
 
-def required_efficiency_db(target_db, source_db):
-    """`required_efficiency` with both levels given in dB (negative
-    numbers for squeezing, e.g. target_db=-3.0, source_db=-10.0)."""
+def required_efficiency_db(target_db, source_db, dark_noise=0.0,
+                           anti_db=None, theta_rms=0.0,
+                           dark_in_reference=False):
+    """`required_efficiency` with the levels given in dB (negative
+    numbers for squeezing, e.g. target_db=-3.0, source_db=-10.0;
+    anti_db is the source's antisqueezing, needed with theta_rms)."""
     Vt = VACUUM_VARIANCE * 10.0 ** (float(target_db) / 10.0)
     Vs = VACUUM_VARIANCE * 10.0 ** (float(source_db) / 10.0)
-    return required_efficiency(Vt, Vs)
+    Va = None if anti_db is None else \
+        VACUUM_VARIANCE * 10.0 ** (float(anti_db) / 10.0)
+    return required_efficiency(Vt, Vs, dark_noise, Va, theta_rms,
+                               dark_in_reference)
 
 
 # ------------------------------------------------------------------
@@ -222,7 +348,9 @@ def phase_noise_squeezing_db(sq_db, anti_db, theta_rms,
     return 10.0 * np.log10(v / VACUUM_VARIANCE)
 
 
-def max_phase_noise(target_variance, v_squeezed, v_antisqueezed):
+def max_phase_noise(target_variance, v_squeezed, v_antisqueezed,
+                    efficiency=1.0, dark_noise=0.0,
+                    dark_in_reference=False):
     """Largest RMS phase jitter that still delivers a target variance.
 
     Inverts the Gaussian-averaged mixing formula for sigma (no static
@@ -232,16 +360,33 @@ def max_phase_noise(target_variance, v_squeezed, v_antisqueezed):
     improve squeezing) or at/above the sigma -> infinity limit
     (V_sq + V_anti)/2, where the measurement no longer distinguishes
     the quadratures.
+
+    efficiency, dark_noise, dark_in_reference (new in 0.14): the
+    target is then the detected variance after the jitter, the loss
+    and the dark noise, as `detected_variance(phase_noise_variance(
+    ...), efficiency, dark_noise, dark_in_reference)` computes it. Both
+    maps are affine, so the target is first carried back through the
+    loss and dark noise exactly and the formula above applies. The
+    refusals then refer to that carried-back target.
     """
-    Vt = float(target_variance)
     Vs = float(v_squeezed)
     Va = float(v_antisqueezed)
     if not (Va > Vs >= 0.0):
         raise ValueError("need v_antisqueezed > v_squeezed >= 0")
+    eta = _check_eta(efficiency)
+    dark = _check_dark(dark_noise)
+    Vt = float(target_variance)
+    if dark_in_reference:
+        eta_e = dark_equivalent_efficiency(dark)
+        Vt = (Vt - (1.0 - eta_e) * VACUUM_VARIANCE) / eta_e
+        dark = 0.0
+    Vt = (Vt - (1.0 - eta) * VACUUM_VARIANCE - dark) / eta
     mid = 0.5 * (Vs + Va)
     if Vt < Vs:
         raise ValueError("phase noise cannot improve squeezing: the "
-                         "target lies below the source variance")
+                         "target lies below the source variance"
+                         + ("" if (eta == 1.0 and float(dark_noise) == 0.0)
+                            else " (after this loss and dark noise)"))
     if Vt >= mid:
         raise ValueError(
             f"target {Vt:.4g} is not phase-noise-limited: even "

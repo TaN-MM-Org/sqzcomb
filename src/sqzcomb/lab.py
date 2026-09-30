@@ -32,6 +32,13 @@ Experiments, SIAM (2006)). The model curves come from
 
 Measured spectra travel in a plain, checked CSV contract
 (`save_spectra_csv` / `load_spectra_csv`) whose round trip is exact.
+
+From raw analyzer traces to dB relative to shot noise (new in 0.14):
+`shot_noise_normalize` takes the traces as recorded (dBm, repeated
+sweeps allowed), averages in linear power, optionally subtracts the
+dark (electronic) noise trace, and returns the level relative to the
+shot-noise trace with a standard error propagated from the scatter of
+the sweeps.
 """
 from __future__ import annotations
 
@@ -44,7 +51,7 @@ from .physical import RingSpec
 
 __all__ = ["plan_noise_measurement", "design_noise_frequencies",
            "ring_from_threshold", "save_spectra_csv",
-           "load_spectra_csv"]
+           "load_spectra_csv", "shot_noise_normalize"]
 
 _COND_MAX = 1e10
 _QUADS = ("squeezed", "anti")
@@ -345,5 +352,92 @@ def load_spectra_csv(path):
     if np.any(f <= 0.0) or not np.all(np.isfinite(f)):
         raise ValueError("analysis frequencies must be positive and "
                          "finite")
+    for name, c in zip(header[1:], cols[1:]):
+        if not np.all(np.isfinite(c)):
+            raise ValueError(f"column {name} holds a non-finite value "
+                             "(nan or inf)")
+    if has_sigma and np.any(np.array(cols[3]) <= 0.0):
+        raise ValueError("sigma_db values must be positive")
     return (f, np.array(cols[1]), np.array(cols[2]),
             np.array(cols[3]) if has_sigma else None)
+
+
+def _sweeps(trace, name, n_freq=None):
+    a = np.asarray(trace, dtype=float)
+    if a.ndim == 1:
+        a = a[None, :]
+    if a.ndim != 2 or a.shape[1] < 1:
+        raise ValueError(f"{name} must be 1-D (one sweep) or 2-D "
+                         "(sweeps x frequencies)")
+    if not np.all(np.isfinite(a)):
+        raise ValueError(f"{name} holds a non-finite value")
+    if n_freq is not None and a.shape[1] != n_freq:
+        raise ValueError(f"{name} has {a.shape[1]} frequency points, "
+                         f"the signal trace {n_freq}")
+    p = 10.0 ** (a / 10.0)                  # linear power
+    k = p.shape[0]
+    mean = p.mean(axis=0)
+    se = p.std(axis=0, ddof=1) / np.sqrt(k) if k > 1 else None
+    return mean, se
+
+
+def shot_noise_normalize(trace_dbm, shot_dbm, dark_dbm=None):
+    """Level of a measured noise trace relative to shot noise.
+
+    trace_dbm : the squeezed or antisqueezed trace as the spectrum
+        analyzer recorded it, in dBm (any logarithmic power unit works
+        if all traces share it); 1-D for one sweep, or 2-D with one row
+        per repeated sweep.
+    shot_dbm : the shot-noise trace (local oscillator only, signal
+        blocked), same shape rules and frequency points.
+    dark_dbm : optional dark-noise trace (no light); when given it is
+        subtracted from both, in linear power.
+
+    Sweeps are averaged in linear power (not in dB). Returns a dict:
+
+    db : 10 log10(T / S) without a dark trace, or 10 log10((T - D) /
+        (S - D)) with one (T, S, D the mean powers of the trace, the
+        shot-noise trace and the dark trace).
+    sigma_db : standard error of db, from the sweep-to-sweep scatter
+        of every trace used (sample standard deviation / sqrt(number of
+        sweeps)), propagated to first order assuming the traces are
+        independent; None unless every trace used has at least two
+        sweeps.
+    dark_variance : with a dark trace, V_dark = (1/2) D / (S - D), the
+        dark noise in the package's vacuum units (the `dark_noise` of
+        `detected_variance`); None otherwise.
+
+    Which number to quote: without subtraction the result is what
+    `detected_squeezing_db(..., dark_noise=V_dark,
+    dark_in_reference=True)` predicts; with subtraction it is the
+    prediction with no dark noise at all. Both identities are exact
+    and checked in the tests. The function does not correct for an
+    analyzer that averaged in dB (log) mode, and it assumes every trace
+    was taken with the same resolution and video bandwidths.
+    """
+    T, sT = _sweeps(trace_dbm, "trace_dbm")
+    n = T.size
+    S, sS = _sweeps(shot_dbm, "shot_dbm", n)
+    if dark_dbm is None:
+        num, den = T, S
+        R = num / den
+        errs = (sT, sS)
+        var = None if any(e is None for e in errs) else \
+            (sT ** 2 + (R * sS) ** 2) / den ** 2
+        dark_var = None
+    else:
+        D, sD = _sweeps(dark_dbm, "dark_dbm", n)
+        num, den = T - D, S - D
+        if np.any(den <= 0.0) or np.any(num <= 0.0):
+            raise ValueError(
+                "the dark trace is not below the shot-noise and signal "
+                "traces at every frequency; it cannot be subtracted")
+        R = num / den
+        errs = (sT, sS, sD)
+        var = None if any(e is None for e in errs) else \
+            (sT ** 2 + (R * sS) ** 2 + ((R - 1.0) * sD) ** 2) / den ** 2
+        dark_var = 0.5 * D / den
+    db = 10.0 * np.log10(R)
+    sig = None if var is None else \
+        (10.0 / np.log(10.0)) * np.sqrt(var) / R
+    return {"db": db, "sigma_db": sig, "dark_variance": dark_var}

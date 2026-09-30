@@ -33,7 +33,7 @@ correlated; the module keeps that correlation by carrying X along as
 an extra variable of the same linear equation (dX/dt =
 w(t)^dag z_out), so Var(X) comes out of the same covariance equation.
 A detector that is not perfect is then handled with `detected_variance`
-or `homodyne_readout` as usual.
+as usual.
 
 What the tests hold this to: a passive cavity gives exactly the vacuum
 value 1/2 for any mode function (which only works if the reflected

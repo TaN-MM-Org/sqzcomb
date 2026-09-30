@@ -8,7 +8,8 @@ would actually report.
 
 Methodological basis: T. M. Mahim, M. M. Rahman and A. S. M. Mohsin,
 "Overcoming the 3 dB squeezing extraction limit in silicon carbide
-microcombs with a photonic molecule" (under review).
+microcombs with a photonic molecule," Optics Express 34(18),
+34822-34834 (2026), https://doi.org/10.1364/OE.612248 (open access).
 """
 from .lle import lle_evolve, homogeneous_steady_states
 from .linearize import fluctuation_matrix, single_mode_parametric
@@ -16,10 +17,12 @@ from .molecule import (molecule_fluctuation_matrix, molecule_threshold,
                        output_variance_ports, photonic_molecule,
                        ring_line_frequencies,
                        vernier_molecule_fluctuation_matrix)
-from .spectra import (output_covariance_xxpp, output_entanglement,
-                      output_entanglement_spectrum,
-                      output_quadrature_variance, squeezing_db)
-from .detection import (dark_from_clearance_db, detected_squeezing_db,
+from .spectra import (optimal_quadrature, output_covariance_xxpp,
+                      output_entanglement, output_entanglement_spectrum,
+                      output_quadrature_variance, quadrature_extremes,
+                      squeezing_db)
+from .detection import (dark_equivalent_efficiency,
+                        dark_from_clearance_db, detected_squeezing_db,
                         detected_variance, lossy_channel_xxpp,
                         max_phase_noise, phase_noise_squeezing_db,
                         phase_noise_variance, required_efficiency,
@@ -43,7 +46,7 @@ from .fitnoise import (ModelFit, NoiseFit, fit_noise_spectra,
 from .inference import infer_source
 from .lab import (design_noise_frequencies, load_spectra_csv,
                   plan_noise_measurement, ring_from_threshold,
-                  save_spectra_csv)
+                  save_spectra_csv, shot_noise_normalize)
 from .kerrpo import kerr_parametric_drift, kerr_parametric_states
 from .master import (coherent_state, fock_operators, fock_state,
                      kerr_parametric_master, liouvillian, master_evolve,
@@ -56,7 +59,7 @@ from .technical import (classical_noise_variance,
 from .pulsed import (covariance_evolution, parametric_pulse_drift,
                      temporal_mode_variance)
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -95,4 +98,7 @@ __all__ = [
     "lle_mode_amplitudes", "normalized_psd",
     "covariance_evolution", "temporal_mode_variance",
     "parametric_pulse_drift", "kerr_shift_from_n2",
+    # new in 0.14
+    "quadrature_extremes", "optimal_quadrature",
+    "dark_equivalent_efficiency", "shot_noise_normalize",
 ]
