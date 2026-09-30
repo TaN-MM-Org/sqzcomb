@@ -19,13 +19,17 @@ It answers questions such as:
   linewidth, output coupling and pump power?
 - How much do optical loss, detector electronics and local-oscillator
   phase jitter take away, and what loss or jitter budget does a target
-  need?
+  need, with all three together?
+- At which local-oscillator angle is the light most squeezed, at each
+  analysis frequency? (Found exactly, without scanning angles.)
 - Can a second, coupled ring get the light out better than one ring
   alone can?
 - Are two comb lines entangled at the output, and would a detector be
   able to show it?
 - From a measured pair of squeezed and antisqueezed levels, or from
-  measured noise spectra, what did the source itself produce?
+  measured noise spectra, what did the source itself produce? And how
+  do raw spectrum-analyzer traces become dB relative to shot noise,
+  with error bars?
 - Before measuring: will the planned frequencies pin down the
   parameters at all?
 - What happens above threshold, or when single photons matter and the
@@ -175,12 +179,20 @@ newer. QuTiP (4.7 or newer) is needed only for `drift_from_qutip`.
   `hbar = 1` (vacuum = 0.5 I, the same scale as the variances above).
 - **Measured traces** (`fit_noise_spectra`, `infer_source`, the CSV
   files) are in dB relative to shot noise, the way a spectrum analyzer
-  trace is calibrated.
+  trace is calibrated. `shot_noise_normalize` makes them from the raw
+  traces in dBm.
+- **Dark noise and the reference level.** By default
+  `detected_variance` adds the dark (electronic) noise to the signal
+  and quotes it against the pure vacuum level. A laboratory ratio to a
+  shot-noise trace taken through the same receiver carries the dark
+  noise in the reference too; `dark_in_reference=True` gives that
+  number (example 19).
 
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with sqzcomb 0.13.0. The device and pump numbers are
+printed with sqzcomb 0.14.0 (examples 1 to 17 print the same as with
+0.13.0). The device and pump numbers are
 illustrative values chosen for the example, not measured data, except
 the measured pair in example 6, which is quoted from the paper named
 there.
@@ -315,7 +327,7 @@ from sqzcomb import (detected_squeezing_db, dark_from_clearance_db,
 
 v_source = 0.05                        # 10 dB below vacuum (vacuum = 0.5)
 print(f"70 % efficiency:            {detected_squeezing_db(v_source, 0.7):.3f} dB")
-dark = dark_from_clearance_db(15.0)    # receiver noise 15 dB below shot noise
+dark = dark_from_clearance_db(15.0)    # receiver noise 15 dB below pure shot noise
 print(f"70 % and 15 dB clearance:   {detected_squeezing_db(v_source, 0.7, dark):.3f} dB")
 print(f"efficiency needed for -6 dB: {required_efficiency_db(-6.0, -10.0):.4f}")
 
@@ -345,7 +357,12 @@ for Gaussian jitter of RMS size `sigma` the average is the closed form
 `<cos 2 theta> = exp(-2 sigma^2)`. The better the source, the larger its
 antisqueezing and the more jitter hurts. At optical frequencies and
 room temperature the thermal photon number is tiny, which is why the
-baths default to vacuum.
+baths default to vacuum. `dark_from_clearance_db(15.0)` reads the 15 dB
+from the pure shot-noise level; for the gap between an analyzer's
+shot-noise trace (which carries the dark noise too) and its dark trace,
+pass `trace_gap=True` (example 19). Here the dark noise is quoted
+against the pure vacuum level; against a shot-noise trace that carries the same
+dark noise the number differs slightly (example 19).
 
 ### 5. Entanglement and supermodes
 
@@ -884,6 +901,105 @@ the material, how it was made and the wavelength, and `V_eff` on the
 geometry and on how the mode volume is defined. A `g0` measured from
 the comb threshold (example 8) is usually the better number.
 
+### 18. The best quadrature angle, exactly
+
+```python
+import numpy as np
+from sqzcomb import (single_mode_parametric, optimal_quadrature,
+                     output_quadrature_variance, squeezing_db)
+
+# A detuned squeezer (illustrative: gain 0.6, detuning 0.3, eta = 0.8).
+M = single_mode_parametric(0.6, delta=0.3)
+r = optimal_quadrature(M, 0.8, [0.0, 0.5, 2.0], 0, 1)
+for w, db, ph in zip([0.0, 0.5, 2.0], r["squeezing_db"], r["phi_min"]):
+    print(f"omega = {w}: best {db:.4f} dB at phi = {ph:.4f} rad")
+
+# The same number from a scan of 181 angles is slightly worse.
+scan = min(output_quadrature_variance(M, 0.8, 0.5, 0, 1, phi=p)
+           for p in np.linspace(0.0, np.pi, 181))
+print(f"181-angle scan at omega = 0.5: {squeezing_db(scan):.4f} dB")
+```
+
+```
+omega = 0.0: best -5.8030 dB at phi = 1.7915 rad
+omega = 0.5: best -4.9141 dB at phi = 1.7588 rad
+omega = 2.0: best -1.5193 dB at phi = 1.6275 rad
+181-angle scan at omega = 0.5: -4.9130 dB
+```
+
+Every quadrature variance depends on the angle as `c0 + c1 cos 2phi +
+c2 sin 2phi`, so three evaluations give the smallest and largest
+value and their angles exactly; a scan over angles can only come close
+(here 0.001 dB short). With a detuning the best angle changes with the
+analysis frequency, so a fixed local-oscillator angle cannot be
+optimal everywhere. `quadrature_extremes` does the same for any
+function of the angle, for example
+`lambda p: output_variance_ports(M, g, eta, 1, w, phi=p)` for a
+photonic molecule; it checks the form with a fourth evaluation and
+refuses a function that does not have it (such as one returning dB).
+
+### 19. The detection budget, and raw analyzer traces
+
+```python
+import numpy as np
+from sqzcomb import (detected_squeezing_db, dark_from_clearance_db,
+                     required_efficiency_db, max_phase_noise,
+                     shot_noise_normalize)
+
+# Dark noise 15 dB below shot noise, 70 % efficiency, a -10 dB source.
+dark = dark_from_clearance_db(15.0)
+print(f"against pure vacuum:        {detected_squeezing_db(0.05, 0.7, dark):.3f} dB")
+print(f"against a shot-noise trace: "
+      f"{detected_squeezing_db(0.05, 0.7, dark, dark_in_reference=True):.3f} dB")
+
+# The whole budget at once: -10 dB / +11 dB source, 20 mrad jitter,
+# the dark noise above. Which efficiency still gives -6 dB?
+print(f"efficiency needed for -6 dB: "
+      f"{required_efficiency_db(-6.0, -10.0, dark, anti_db=11.0, theta_rms=0.02):.4f}")
+v_sq, v_an = 0.5 * 10 ** -1.0, 0.5 * 10 ** 1.1
+print(f"jitter allowed for -6 dB at 90 % efficiency: "
+      f"{max_phase_noise(0.5 * 10 ** -0.6, v_sq, v_an, 0.9, dark) * 1e3:.1f} mrad")
+
+# Raw analyzer traces (made up for the example, in dBm): three sweeps
+# of the squeezed trace, the shot-noise trace and the dark trace at
+# two analysis frequencies.
+sq = [[-84.02, -83.10], [-83.95, -83.21], [-84.10, -83.15]]
+shot = [[-80.00, -80.02], [-79.97, -80.05], [-80.03, -79.98]]
+dark_tr = [[-95.1, -95.0], [-94.9, -95.2], [-95.0, -95.1]]
+out = shot_noise_normalize(sq, shot, dark_tr)
+print("dB re shot noise:", np.round(out["db"], 3),
+      "+/-", np.round(out["sigma_db"], 3))
+print("dark noise, vacuum units:", np.round(out["dark_variance"], 5))
+```
+
+```
+against pure vacuum:        -3.962 dB
+against a shot-noise trace: -4.097 dB
+efficiency needed for -6 dB: 0.8720
+jitter allowed for -6 dB at 90 % efficiency: 51.4 mrad
+dB re shot noise: [-4.245 -3.286] +/- [0.05 0.04]
+dark noise, vacuum units: [0.01633 0.01601]
+```
+
+A spectrum analyzer compares the squeezed trace with a shot-noise
+trace taken through the same receiver, so both carry the dark noise.
+Their ratio is the same as an extra loss of efficiency `(1/2) / (1/2 +
+V_dark)` (the equivalence of electronic noise and loss shown by J.
+Appel et al., Phys. Rev. A 75, 035802 (2007)); `dark_in_reference=True`
+gives that number, and the default keeps the convention of earlier
+versions. `required_efficiency` and `max_phase_noise` now take loss,
+jitter and dark noise together and invert the budget exactly.
+`shot_noise_normalize` turns raw traces (one row per repeated sweep)
+into dB relative to shot noise: sweeps are averaged in linear power,
+the dark trace is subtracted if given, and the error bar is the
+standard error from the sweep-to-sweep scatter. The traces here are
+made-up numbers for the example. It does not correct for an analyzer
+that averaged in dB (log) mode. The dark variance it reports (0.01633
+at the first frequency, where the shot and dark traces are 14.9993 dB
+apart) is what `dark_from_clearance_db(14.9993, trace_gap=True)` gives;
+without `trace_gap=True` the same 14.9993 dB would be read from the
+pure shot-noise level and give 0.01581.
+
 ## What is in the package
 
 **Classical field**
@@ -907,6 +1023,9 @@ the comb threshold (example 8) is usually the better number.
 - `output_quadrature_variance` -- the noise of one output quadrature
   (or the joint quadrature of two lines) at frequency `omega`, with
   optional thermal baths; `squeezing_db` converts to dB.
+- `optimal_quadrature`, `quadrature_extremes` -- the most squeezed and
+  most antisqueezed quadrature and their angles, exactly, at one
+  frequency or over a spectrum (example 18).
 - `output_covariance_xxpp` -- the full output covariance matrix;
   `output_entanglement`, `output_entanglement_spectrum` -- `E_N`
   between two output lines, optionally after detection loss.
@@ -917,7 +1036,8 @@ the comb threshold (example 8) is usually the better number.
   rings; `molecule_threshold(J, gamma)` -- its exact threshold on
   resonance; `output_variance_ports` -- the detected noise when rings
   have different decay rates and the output port sits on one (or
-  several) of them.
+  several) of them, with optional thermal baths and `allow_marginal`
+  as for a single ring.
 - `molecule_fluctuation_matrix` -- the multimode version: every
   retained comb line coupled to a matching line of an auxiliary ring.
 - `vernier_molecule_fluctuation_matrix`, `ring_line_frequencies` --
@@ -981,12 +1101,16 @@ the comb threshold (example 8) is usually the better number.
 
 - `detected_variance`, `detected_squeezing_db`,
   `dark_from_clearance_db`, `lossy_channel_xxpp` -- loss and
-  electronic noise, on single variances or on covariance matrices.
+  electronic noise, on single variances or on covariance matrices
+  (`trace_gap=True` for a clearance read as the gap between the
+  shot-noise and dark traces);
+  `dark_in_reference=True` and `dark_equivalent_efficiency` for a
+  result quoted against a shot-noise trace that carries the dark noise.
 - `required_efficiency`, `required_efficiency_db` -- the efficiency a
-  target needs.
+  target needs, optionally with dark noise and phase jitter too.
 - `phase_noise_variance`, `phase_noise_squeezing_db`,
   `max_phase_noise` -- LO phase jitter, and the jitter a target
-  allows.
+  allows (optionally after loss and dark noise).
 
 **Lab units, fitting and planning**
 
@@ -1010,6 +1134,9 @@ the comb threshold (example 8) is usually the better number.
   `ring_from_threshold`, `save_spectra_csv`, `load_spectra_csv` --
   measurement planning, `g0` calibration, and a checked CSV format for
   spectra.
+- `shot_noise_normalize` -- raw analyzer traces in dBm (repeated
+  sweeps allowed) to dB relative to shot noise, with optional dark
+  subtraction and standard errors.
 
 Each function's docstring (`help(sqzcomb.output_quadrature_variance)`,
 for example) gives its inputs, units and conventions.
@@ -1026,9 +1153,14 @@ for example) gives its inputs, units and conventions.
   that direction is understood;
 - a thermal occupation or dark noise is negative, a decay rate
   (`gamma`, `gamma_b`) is not positive, a detection efficiency is
-  outside (0, 1] (`eta` outside [0, 1] for `output_variance_ports`), a
-  variance or a dark clearance is negative, or `thermal_occupation`
-  gets a non-positive frequency or a negative temperature;
+  outside (0, 1], a port's escape fraction `eta` is outside [0, 1]
+  (in every spectra function; before 0.14 the single-ring spectra
+  returned NaN, and `output_entanglement` 0), a variance or a dark
+  clearance is negative, or `thermal_occupation` gets a non-positive
+  frequency or a negative temperature;
+- a mode index is not an integer in `[0, n_modes)` (a negative index
+  used to read the wrong quadrature), `n_modes` does not match the
+  drift matrix, or a joint quadrature names the same mode twice;
 - a detector is placed on a line that never enters its bus
   (`output_variance_ports`);
 - a matrix is not a valid covariance matrix (odd size, not symmetric,
@@ -1079,11 +1211,21 @@ for example) gives its inputs, units and conventions.
   exists (a refusal can also just mean the starting guess was too far
   off: let `lle_evolve` settle the state first);
 - a pump profile has the wrong length or is not finite; a PSD is
-  negative; a mode function vanishes on the time window.
+  negative; a mode function vanishes on the time window;
+- `quadrature_extremes` is given a function of the angle that is not
+  of the form `c0 + c1 cos 2phi + c2 sin 2phi` (for example one that
+  returns dB);
+- `required_efficiency` is given jitter without the antisqueezed
+  level, or a target that even efficiency 1 cannot reach with the
+  stated dark noise and jitter; `max_phase_noise` a target that the
+  loss and dark noise alone already miss;
+- `shot_noise_normalize` gets traces of different lengths, a
+  non-finite value, or a dark trace that is not below the others;
+  `load_spectra_csv` a non-finite value or a non-positive `sigma_db`.
 
 ## How the results are checked
 
-164 automated tests run on every push and pull request, on Python 3.9,
+183 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest versions the package allows (NumPy 1.22.0, SciPy 1.10.0, QuTiP
 4.7.0). The five QuTiP tests are skipped when QuTiP is not installed,
@@ -1111,6 +1253,18 @@ with the tolerances the tests use:
 - The LLE solver's free decay matches `exp(-t)` (relative 1e-3), and
   its flat state matches the cubic root (relative 1e-4).
 
+**Best quadrature angle (new in 0.14)**
+
+- `optimal_quadrature` equals the eigenvalues of the 2x2 output
+  covariance block from `output_covariance_xxpp` (a separate code
+  path) to 1e-12, and its angle equals the eigenvector's to 1e-9, for
+  a detuned squeezer with a complex gain and for the pumped line of a
+  comb; through the molecule's port with `J = 0` it equals the
+  single-mode closed forms (relative 1e-12). An angle scan never goes
+  below it, and misses it by no more than the grid allows
+  (`2 r (dphi/2)^2`). For the twin beam, `E_N = -ln(2 V_min)` now
+  holds to 1e-10 (the scan-based test needed 1e-6).
+
 **Photonic molecules**
 
 - With `J = 0` the molecule reproduces the single-mode closed form to
@@ -1123,6 +1277,13 @@ with the tolerances the tests use:
   mode with decay `1 + J^2/gamma` and efficiency
   `eta (J^2/gamma)/(1 + J^2/gamma)`, to 1e-12, for four parameter sets;
   the `J^2/gamma = 3` molecule gives between -6.03 and -6.01 dB.
+- With thermal baths the port spectra of a passive molecule are
+  exactly `(2 n_bar + 1)/2` at 12 random settings (1e-12); with
+  `J = 0` a hot loss bath and a colder port give the same result as
+  the single-ring path (1e-12), and a resonant molecule with every bath
+  at `n_bar` gives `(2 n_bar + 1)` times its vacuum spectrum (relative
+  1e-12). At threshold (`allow_marginal=True`) the port path equals the
+  single-ring path (1e-13) and the closed form (relative 1e-12).
 - The multimode molecule equals the two-ring model at one line
   (1e-14), reduces to the plain comb machinery at `J = 0` (1e-12), and
   satisfies the same `omega = 0` equivalence for the twin-beam
@@ -1154,6 +1315,14 @@ with the tolerances the tests use:
 - Vacuum is unchanged by loss (1e-15); two losses equal one of the
   product efficiency (1e-15 scalar, 1e-13 matrix); the scalar and
   matrix forms agree (1e-13).
+- With `dark_in_reference=True` the result equals plain loss with
+  efficiency `eta (1/2)/(1/2 + V_dark)` and the literal ratio of the
+  two traces (1e-15). `required_efficiency` inverts loss, jitter and
+  dark noise together on a grid of 2 sources, 3 jitters, 3 dark levels,
+  both conventions and 3 efficiencies (1e-12; grid points whose
+  target is not below shot noise are skipped), and `max_phase_noise`
+  inverts jitter after loss and dark noise (relative 1e-9); their
+  defaults are unchanged bit for bit.
 - The jitter formula equals direct numerical integration over the
   Gaussian distribution to 1e-10; zero, static and very large jitter
   give the known limiting values (to 1e-12 or better); `max_phase_noise` inverts it to 1e-12; loss
@@ -1184,6 +1353,14 @@ with the tolerances the tests use:
   `eta = 1`; one quadrature alone gives a scaled singular value below
   1e-8 of the largest. The greedy frequency choice was never beaten
   by any of 30 random subsets of the same size.
+- `shot_noise_normalize` on noise-free traces built from
+  `detected_variance` gives back `detected_squeezing_db` with
+  `dark_in_reference=True` (no subtraction) or with no dark noise
+  (subtraction) to 1e-12 dB, and the dark variance to a relative
+  1e-12, which also equals `dark_from_clearance_db(gap,
+  trace_gap=True)` for the shot-to-dark trace gap (relative 1e-12);
+  over 400 seeded repetitions of 8 noisy sweeps, the scatter of
+  the result is between 0.85 and 1.15 times the reported error bar.
 - `ring_from_threshold` round-trips through `threshold_power` to a
   relative 1e-12; its error bar matches finite differences within
   0.1 %. The CSV round trip is bit-exact.
@@ -1273,7 +1450,33 @@ with the tolerances the tests use:
 
 ## Corrections
 
-**0.13.0 (this release)** fixes one bug: `output_quadrature_variance`
+**0.14.0 (this release)** fixes inputs that gave wrong answers
+without an error:
+
+- `output_quadrature_variance`, `output_covariance_xxpp` and the
+  output-entanglement functions accepted an escape fraction `eta`
+  outside [0, 1]. The variance and the covariance came out NaN (with
+  only a NumPy warning), and `output_entanglement_spectrum` then
+  reported `E_N = 0`, "not entangled" (for example for the twin beam
+  of example 5 at `eta = 1.5`). They now refuse.
+- A negative mode index (`mode_index=-1`) was accepted by
+  `output_quadrature_variance`, `output_variance_ports` and the
+  technical-noise functions and read the last mode at the angle `-phi`
+  instead of `phi` (for `photonic_molecule(0.5, 1.0, delta_a=0.4)`,
+  `eta = 0.5`, `omega = 0`, `phi = 0.4`: 0.5098, which belongs to
+  `-phi`, instead of 0.4347 for mode 1). Naming the same mode twice
+  for a joint quadrature returned twice the single-mode variance. Both are now refused, as is an `n_modes`
+  that does not match the drift matrix.
+- `output_variance_ports` refused a marginally stable drift matrix
+  (for example a soliton's) as "above threshold" and had no
+  `allow_marginal`; it now uses the same stability test as the
+  single-ring spectra, so a largest growth rate within 1e-6 of zero
+  needs `allow_marginal=True` (before, any negative value, even
+  `-4.9e-32` from rounding exactly at threshold, was accepted).
+- `load_spectra_csv` accepted `nan` or `inf` in the dB columns and a
+  zero or negative `sigma_db`; it now refuses them.
+
+**0.13.0** fixed one bug: `output_quadrature_variance`
 and `output_variance_ports` read the quadrature at angle `-phi`
 instead of the documented `phi` (`X_phi = cos phi x + sin phi p`, the
 convention of `output_covariance_xxpp`). The two readings agree at
@@ -1304,6 +1507,23 @@ for the real tolerances). The full history is in
 [CHANGELOG.md](CHANGELOG.md).
 
 ## Limits
+
+What 0.14.0 adds to the picture:
+
+- **Quadrature angle.** The best and worst angle are now found exactly
+  (example 18), so results no longer carry the error of an angle scan.
+  In an experiment the local oscillator usually sits at one angle for
+  all frequencies; with a detuning that angle cannot be the best one
+  everywhere, and the package does not yet choose the best single
+  angle for a band.
+- **Dark noise.** Two conventions are available (example 19); the
+  default is still the one of earlier versions. Which one matches a
+  published number depends on how that number was normalized, which
+  the package cannot know.
+- **Raw traces.** `shot_noise_normalize` assumes the traces were
+  averaged in linear power, taken with the same analyzer settings, and
+  independent from sweep to sweep; its error bar is first order in the
+  scatter and needs at least two sweeps of every trace.
 
 What 0.13.0 changed about the limits of earlier versions, and what is
 left:

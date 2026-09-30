@@ -1,5 +1,118 @@
 # Changelog
 
+## 0.14.0 (2026-09-30)
+
+Exact best quadrature angle, the whole detection budget at once, raw
+analyzer traces, thermal baths and marginal stability for the
+molecule's ports, and input checks that close silent wrong answers.
+
+### Fixed
+
+- `output_quadrature_variance`, `output_covariance_xxpp`,
+  `output_entanglement` and `output_entanglement_spectrum` accepted an
+  escape fraction `eta` outside [0, 1]: the variance and covariance
+  came out NaN (only a NumPy RuntimeWarning), and the entanglement
+  functions returned `E_N = 0` (twin beam of README example 5 at
+  `omega = 0`: 0.0 at `eta = 1.5`; 2.1972 at `eta = 1`). Now a
+  ValueError.
+- A negative mode index was accepted by `output_quadrature_variance`,
+  `output_variance_ports`, `classical_noise_variance` and
+  `classical_noise_variance_ports`; in the doubled vector it read the
+  last mode at `-phi` (for `photonic_molecule(0.5, 1.0, delta_a=0.4)`,
+  `eta = 0.5`, `omega = 0`, `phi = 0.4`: 0.50975, the value at `-phi`,
+  instead of 0.43468). `mode_index_b == mode_index` returned twice the
+  single-mode variance (2.7778 instead of 1.3889 in a twin-beam case);
+  an `n_modes` that does not match the drift matrix failed with a
+  shape error or, in `output_covariance_xxpp`, after the stability
+  check. All are now refused up front with a message.
+- `output_variance_ports` refused a marginally stable drift matrix as
+  "above threshold" and had no `allow_marginal`.
+- `load_spectra_csv` accepted `nan`/`inf` in the dB columns and a
+  non-positive `sigma_db`.
+- The `pulsed` module docstring referred to a `homodyne_readout`
+  function that does not exist.
+- The package docstring (`sqzcomb.__init__`) still called the
+  associated paper "under review"; it now cites it as published,
+  consistent with the README: Optics Express 34(18), 34822-34834
+  (2026), doi:10.1364/OE.612248.
+
+### Added
+
+- `quadrature_extremes(variance_at)`: exact smallest and largest
+  variance over the LO angle and their angles, from three evaluations
+  (every quadrature variance is `c0 + c1 cos 2phi + c2 sin 2phi`), with
+  a fourth evaluation that refuses a function without that form.
+  `optimal_quadrature(M, eta, omega, ...)`: the same for the output
+  spectra, over an array of frequencies.
+- `output_variance_ports(..., n_th_port=, n_th_loss=,
+  allow_marginal=)`: thermal baths and marginal matrices, as the
+  single-ring spectra already had.
+- `detected_variance` / `detected_squeezing_db(...,
+  dark_in_reference=True)`: the result against a shot-noise trace that
+  carries the same dark noise, i.e. dark noise as the equivalent loss
+  `dark_equivalent_efficiency(V_dark) = (1/2) / (1/2 + V_dark)` (the
+  equivalence of J. Appel, D. Hoffman, E. Figueroa and A. I. Lvovsky,
+  Phys. Rev. A 75, 035802 (2007); the formula is derived from the
+  two-trace ratio in the docstring and tested).
+- `required_efficiency(..., dark_noise=, v_antisqueezed=, theta_rms=,
+  dark_in_reference=)` and `required_efficiency_db(..., anti_db=)`:
+  the efficiency a target needs with dark noise and LO jitter too,
+  exactly (the budget stays linear in the efficiency).
+  `max_phase_noise(..., efficiency=, dark_noise=,
+  dark_in_reference=)`: the jitter a target allows after loss and dark
+  noise.
+- `dark_from_clearance_db(clearance_db, trace_gap=True)`: a clearance
+  read as the gap between an analyzer's shot-noise trace (which carries
+  the dark noise) and its dark trace, V_dark = 0.5 / (10^(c/10) - 1);
+  the default still reads it from the pure shot-noise level,
+  V_dark = 0.5 * 10^(-c/10) (15 dB: 0.01633 against 0.01581). The
+  docstring and README now say which is which.
+- `lab.shot_noise_normalize`: raw analyzer traces in dBm (one row per
+  repeated sweep) to dB relative to shot noise, averaged in linear
+  power, with optional dark-trace subtraction, the dark variance in
+  vacuum units, and a first-order standard error from the sweep
+  scatter.
+
+### Behaviour changes
+
+- `output_variance_ports` now uses the stability test of
+  `output_quadrature_variance`: a largest eigenvalue real part within
+  1e-6 of zero is marginal and needs `allow_marginal=True`. Before, any
+  negative value was accepted (for `single_mode_parametric(1.0)`,
+  exactly at threshold, the rounding gives -4.9e-32, and 0.13.0
+  returned 0.21765 at `omega = 0.5`, `phi = pi/2`, `eta = 0.6`; 0.14.0
+  refuses unless told, and then returns the same 0.21765 =
+  0.5 (1 - 2.4 / 4.25)).
+- The refusals listed under Fixed: calls that returned NaN, a wrong
+  number or `E_N = 0` now raise ValueError. `dark_noise` must now be
+  finite (infinity used to pass through), and a NaN clearance in
+  `dark_from_clearance_db` is refused (it used to return NaN).
+- `examples/squeezing_vs_coupling.py` uses `optimal_quadrature`
+  instead of a 60-angle scan; its printed values change by at most
+  0.001 dB (for example -2.125 -> -2.126 dB at eta = 0.5, -6.459 ->
+  -6.460 dB at eta = 1.0).
+- Nothing else changes: every README example 1 to 17 prints the same
+  as with 0.13.0, and the defaults of `detected_variance`,
+  `required_efficiency` and `max_phase_noise` return the same numbers
+  bit for bit (tested).
+
+### Tests
+
+183 tests (164 in 0.13.0; with QuTiP 5.3.1 installed all ran, none
+skipped). New files: `test_optimal_quadrature.py`,
+`test_input_checks_ports.py`, `test_budget_traces.py`. References:
+eigenvalues and eigenvectors of the output covariance (a separate code
+path), single-mode closed forms, angle scans with their exact grid
+error bound, the twin-beam identity `E_N = -ln(2 V_min)` (now 1e-10,
+was 1e-6 with a scan), the single-ring path for the molecule's ports,
+the exact thermal fixed point, round trips through the forward
+detection maps, and a seeded Monte Carlo of repeated sweeps.
+
+### Changed
+
+- README: examples 18 and 19, the dark-noise convention, new refusals,
+  checks and limits, and the 0.14.0 corrections.
+
 ## 0.13.0 (2026-09-23)
 
 Beyond the limits listed in 0.12.1: above threshold, non-Gaussian
