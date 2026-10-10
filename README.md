@@ -21,7 +21,8 @@ It answers questions such as:
   phase jitter take away, and what loss or jitter budget does a target
   need, with all three together?
 - At which local-oscillator angle is the light most squeezed, at each
-  analysis frequency? (Found exactly, without scanning angles.)
+  analysis frequency? (Found exactly, without scanning angles.) And
+  which one fixed angle is best for a whole band of frequencies?
 - Can a second, coupled ring get the light out better than one ring
   alone can?
 - Are two comb lines entangled at the output, and would a detector be
@@ -29,7 +30,8 @@ It answers questions such as:
 - From a measured pair of squeezed and antisqueezed levels, or from
   measured noise spectra, what did the source itself produce? And how
   do raw spectrum-analyzer traces become dB relative to shot noise,
-  with error bars?
+  with error bars? How much does an uncertain shot-noise reference
+  add to those error bars?
 - Before measuring: will the planned frequencies pin down the
   parameters at all?
 - What happens above threshold, or when single photons matter and the
@@ -191,8 +193,8 @@ newer. QuTiP (4.7 or newer) is needed only for `drift_from_qutip`.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with sqzcomb 0.14.0 (examples 1 to 17 print the same as with
-0.13.0). The device and pump numbers are
+printed with sqzcomb 0.15.0 (examples 1 to 19 print the same as with
+0.14.0). The device and pump numbers are
 illustrative values chosen for the example, not measured data, except
 the measured pair in example 6, which is quoted from the paper named
 there.
@@ -1000,6 +1002,114 @@ apart) is what `dark_from_clearance_db(14.9993, trace_gap=True)` gives;
 without `trace_gap=True` the same 14.9993 dB would be read from the
 pure shot-noise level and give 0.01581.
 
+### 20. One local-oscillator angle for a whole band
+
+```python
+import numpy as np
+from sqzcomb import single_mode_parametric, optimal_band_quadrature
+
+# The detuned squeezer of example 18 (gain 0.6, detuning 0.3, eta = 0.8),
+# recorded from omega = 0 to 2 with one fixed local-oscillator angle.
+M = single_mode_parametric(0.6, delta=0.3)
+band = np.linspace(0.0, 2.0, 21)
+r = optimal_band_quadrature(M, 0.8, band, 0, 1)
+print(f"best fixed angle: {r['phi']:.4f} rad "
+      f"(band average {r['squeezing_db_band']:.3f} dB)")
+for k in (0, 10, 20):
+    print(f"omega = {band[k]:.1f}: {r['squeezing_db'][k]:.3f} dB at that angle, "
+          f"{r['penalty_db'][k]:.3f} dB short of the best angle there "
+          f"({r['phi_opt'][k]:.4f} rad)")
+```
+
+```
+best fixed angle: 1.7506 rad (band average -3.253 dB)
+omega = 0.0: -5.532 dB at that angle, 0.271 dB short of the best angle there (1.7915 rad)
+omega = 1.0: -3.330 dB at that angle, 0.053 dB short of the best angle there (1.7000 rad)
+omega = 2.0: -1.449 dB at that angle, 0.070 dB short of the best angle there (1.6275 rad)
+```
+
+In a measurement the local oscillator usually stays at one angle while
+the analyzer sweeps many frequencies. With a detuning the best angle
+moves with frequency (example 18), so no single angle is best
+everywhere. `optimal_band_quadrature` finds the one angle that gives
+the lowest average noise over the band, exactly and without a scan:
+every variance has the form `c0 + c1 cos 2phi + c2 sin 2phi`, and so
+does any weighted average of them. It also reports, at each frequency,
+how much the fixed angle loses against the best angle there. Pass
+`weights` (for example the width of each frequency bin) to weigh the
+band the way your detector does. The average is taken over the
+variance, which is the noise power a detector integrating over the
+band would see.
+
+### 21. An uncertain shot-noise reference
+
+```python
+import numpy as np
+from sqzcomb import (noise_spectrum_db, fit_noise_spectra,
+                     plan_noise_measurement, infer_source)
+
+# The synthetic traces of example 7, divided by a shot-noise reference
+# that is 0.15 dB too low (illustrative): both traces move up together.
+mu, eta, kappa_hz = 0.55, 0.62, 12e6
+f = np.linspace(0.5e6, 30e6, 25)
+rng = np.random.default_rng(1)
+sq = noise_spectrum_db(mu, eta, kappa_hz, f, "squeezed") + rng.normal(0, 0.05, f.size)
+an = noise_spectrum_db(mu, eta, kappa_hz, f, "anti") + rng.normal(0, 0.05, f.size)
+sq, an = sq + 0.15, an + 0.15
+
+plain = fit_noise_spectra(f, sq_db=sq, anti_db=an, sigma_db=0.05)
+cal = fit_noise_spectra(f, sq_db=sq, anti_db=an, sigma_db=0.05,
+                        calib_sigma_db=0.2)          # reference known to 0.2 dB
+print(f"offset ignored:   eta = {plain.eta:.4f} +/- {plain.sigma['eta']:.4f}, "
+      f"chi^2 / dof = {plain.chi2:.1f} / {plain.chi2_dof}")
+print(f"offset allowed:   eta = {cal.eta:.4f} +/- {cal.sigma['eta']:.4f}, "
+      f"chi^2 / dof = {cal.chi2:.1f} / {cal.chi2_dof}")
+print(f"fitted reference offset: {cal.calib_offset_db:+.3f} "
+      f"+/- {cal.sigma['calib_offset_db']:.3f} dB")
+
+# Before measuring: the error bar the 0.2 dB calibration leaves on eta.
+for c in (None, 0.2):
+    p = plan_noise_measurement(mu, eta, kappa_hz, f, sigma_db=0.05,
+                               calib_sigma_db=c)
+    print(f"planned sigma of eta, calibration error {c}: {p['sigma']['eta']:.4f}")
+
+# One measured pair (example 6): the same calibration error moves both
+# levels together, which matters more than two independent errors.
+for c in (None, 0.1):
+    out = infer_source(-1.71, 5.54, sigma_db=0.1, calib_sigma_db=c)
+    print(f"source {out['sq_db_source']:.2f} +/- {out['sq_db_source_sigma']:.2f} dB, "
+          f"eta {out['eta']:.4f} +/- {out['eta_sigma']:.4f} (calibration error {c})")
+```
+
+```
+offset ignored:   eta = 0.5821 +/- 0.0036, chi^2 / dof = 339.5 / 47
+offset allowed:   eta = 0.6173 +/- 0.0040, chi^2 / dof = 35.5 / 47
+fitted reference offset: +0.147 +/- 0.008 dB
+planned sigma of eta, calibration error None: 0.0035
+planned sigma of eta, calibration error 0.2: 0.0040
+source -8.99 +/- 0.25 dB, eta 0.3724 +/- 0.0204 (calibration error None)
+source -8.99 +/- 0.43 dB, eta 0.3724 +/- 0.0300 (calibration error 0.1)
+```
+
+Every point of a squeezing trace is divided by the same shot-noise
+reference. If that reference is off, every point of both traces moves
+by the same number of dB. More frequencies do not average this error
+away, and a fit that treats all errors as independent can be wrong by
+many of its own error bars without saying so (here `eta` comes out
+0.5821 +/- 0.0036 against a true 0.62; only the large chi-square hints
+at it). With `calib_sigma_db`, `fit_noise_spectra` fits a common
+offset of the reference along with the parameters, constrained by the
+stated calibration error. This is the same as a fit with the full
+correlated error matrix: `sigma_db^2` on the diagonal, plus
+`calib_sigma_db^2` in every entry. The error bars are the ones that
+matrix gives.
+Here both traces approach shot noise at high frequency, so the data
+pin the offset down well. `plan_noise_measurement` gives the same error
+bars before measuring, and `infer_source` propagates the calibration
+error into the inferred source, taking into account that it moves the
+squeezed and antisqueezed levels together. The offset of 0.15 dB is
+made up for the example.
+
 ## What is in the package
 
 **Classical field**
@@ -1026,6 +1136,9 @@ pure shot-noise level and give 0.01581.
 - `optimal_quadrature`, `quadrature_extremes` -- the most squeezed and
   most antisqueezed quadrature and their angles, exactly, at one
   frequency or over a spectrum (example 18).
+- `optimal_band_quadrature` (new in 0.15): the one fixed angle that
+  gives the lowest (optionally weighted) average noise over a band of
+  frequencies, and what it costs at each frequency (example 20).
 - `output_covariance_xxpp` -- the full output covariance matrix;
   `output_entanglement`, `output_entanglement_spectrum` -- `E_N`
   between two output lines, optionally after detection loss.
@@ -1120,20 +1233,24 @@ pure shot-noise level and give 0.01581.
   -- conversions between lab and model units.
 - `fit_noise_spectra`, `NoiseFit`, `noise_spectrum_db` -- fit
   `(mu, eta, kappa)` and optionally a dark-noise floor to measured
-  spectra, and the model curve itself.
+  spectra, and the model curve itself. With `calib_sigma_db` (new in
+  0.15) the fit also carries the uncertainty of the shot-noise
+  reference, an error shared by every point (example 21).
 - `fit_spectra_model`, `ModelFit`, `parametric_spectra_model`,
   `molecule_spectra_model`, `jitter_average` -- fit any spectrum model
   (ready-made: the single-mode model with optional detuning, LO jitter
   and dark floor; the two-ring molecule, optionally detuned), with
   checks that the data determine the parameters.
 - `infer_source` -- the source behind a measured squeezed /
-  antisqueezed pair, optionally with a known purity and phase jitter.
+  antisqueezed pair, optionally with a known purity and phase jitter,
+  and (new in 0.15, `calib_sigma_db`) a shot-noise calibration error
+  that moves both levels together.
 - `kerr_shift_from_n2` -- `g0` from `n2`, the refractive index and the
   mode volume that you supply.
 - `plan_noise_measurement`, `design_noise_frequencies`,
   `ring_from_threshold`, `save_spectra_csv`, `load_spectra_csv` --
-  measurement planning, `g0` calibration, and a checked CSV format for
-  spectra.
+  measurement planning (with `calib_sigma_db` since 0.15), `g0`
+  calibration, and a checked CSV format for spectra.
 - `shot_noise_normalize` -- raw analyzer traces in dBm (repeated
   sweeps allowed) to dB relative to shot noise, with optional dark
   subtraction and standard errors.
@@ -1221,11 +1338,24 @@ for example) gives its inputs, units and conventions.
   loss and dark noise alone already miss;
 - `shot_noise_normalize` gets traces of different lengths, a
   non-finite value, or a dark trace that is not below the others;
-  `load_spectra_csv` a non-finite value or a non-positive `sigma_db`.
+  `load_spectra_csv` a non-finite value or a non-positive `sigma_db`;
+- (new in 0.15) the modes read by `output_variance_ports` or
+  `classical_noise_variance_ports` name the same mode twice (a repeated
+  port alone is fine); `noise_spectrum_db` gets a quadrature name other
+  than `"squeezed"` or `"anti"` (`"antisqueezed"` also works);
+  `lossy_channel_xxpp` or `output_entanglement` gets a NaN efficiency,
+  and the entanglement functions a covariance matrix with NaN or
+  infinite entries; `soliton_seed` gets a detuning that is not
+  positive or fewer than one pulse;
+- (new in 0.15) `calib_sigma_db` is not finite and positive, or is
+  given to `fit_noise_spectra` without `sigma_db`;
+  `optimal_band_quadrature` gets an empty or non-finite frequency
+  list, or weights that are negative, not finite, all zero or of the
+  wrong length.
 
 ## How the results are checked
 
-183 automated tests run on every push and pull request, on Python 3.9,
+195 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest versions the package allows (NumPy 1.22.0, SciPy 1.10.0, QuTiP
 4.7.0). The five QuTiP tests are skipped when QuTiP is not installed,
@@ -1264,6 +1394,34 @@ with the tolerances the tests use:
   below it, and misses it by no more than the grid allows
   (`2 r (dphi/2)^2`). For the twin beam, `E_N = -ln(2 V_min)` now
   holds to 1e-10 (the scan-based test needed 1e-6).
+
+**New in 0.15**
+
+- `optimal_band_quadrature` equals the smallest eigenvalue, and its
+  angle the eigenvector, of the band average of the 2x2 output
+  covariance blocks from `output_covariance_xxpp` (a separate code
+  path), to 1e-12 and 1e-9, with equal and with random weights; no
+  angle of a 181-angle scan does better on the band. With a real gain
+  and no detuning it gives `pi/2` and the closed form at every
+  frequency (1e-12), and with one frequency, or all weight on one, it
+  gives that frequency's `optimal_quadrature` (1e-14).
+- `optimal_quadrature` now builds the output matrix once per frequency;
+  its results equal the per-angle calls of 0.14 exactly (tested with
+  `==`).
+- With `calib_sigma_db`, the error bars of `fit_noise_spectra` and
+  `plan_noise_measurement` equal `(J^T C^-1 J)^-1` built in the test
+  from the closed-form spectra and the explicit matrix
+  `C = sigma_db^2 I + calib_sigma_db^2 (all ones)` (planner 1e-4, fit
+  2 %); the fitted offset and chi-square equal the closed-form optimum
+  offset and `r^T C^-1 r` (relative 1e-6). In 30 seeded trials with a
+  common 0.2 dB offset, the plain fit scatters more than 3 times its
+  error bar, and the calibrated fit between 0.6 and 1.6 times its own.
+- `infer_source` with `calib_sigma_db` matches the closed-form
+  gradients of `eta = -2 s a / (s + a)` and of the source level
+  `10 log10(-s / a)` (relative 1e-6), and 1500 seeded trials with a
+  common offset (within 10 %); with `sigma_db` alone it is unchanged.
+- The four fixes under [Corrections](#corrections) each have a test
+  that fails on 0.14.0.
 
 **Photonic molecules**
 
@@ -1450,8 +1608,37 @@ with the tolerances the tests use:
 
 ## Corrections
 
-**0.14.0 (this release)** fixes inputs that gave wrong answers
-without an error:
+**0.15.0 (this release)** fixes four inputs that gave a wrong answer
+without an error. Each fix has a test that fails on 0.14.0:
+
+- `output_variance_ports` and `classical_noise_variance_ports` counted
+  a mode twice when it was named twice among the modes read
+  (`mode_index=[1, 1]`, or `port_mode=[1, 1]` with the default
+  `mode_index`), and so returned twice the variance: 3.8444 instead
+  of 1.9222 for the twin beam of example 5 at `eta = 0.8`, `omega = 0`,
+  `phi = 0.3`. This is now refused. A repeated port with distinct
+  modes read still works and gives the same number as before.
+- `noise_spectrum_db` returned the antisqueezed curve for every
+  quadrature name other than `"squeezed"`. A typo such as
+  `"Squeezed"` gave +8.141 dB at 1 MHz where the squeezed trace is
+  -5.210 dB (`mu = 0.5`, `eta = 0.8`, `kappa_hz = 10e6`). Unknown
+  names are now refused; `"anti"` and `"antisqueezed"` work as before.
+- A NaN detection efficiency passed `lossy_channel_xxpp`, and the
+  entanglement functions turned the resulting NaN matrix into
+  `E_N = 0`, "not entangled" (the twin beam above has `E_N = 1.2417`,
+  or 0.6887 at 70 % detection). Both are now refused.
+- `soliton_seed` returned an all-NaN seed for a negative detuning
+  (with only a NumPy warning) and raised `ZeroDivisionError` at zero
+  detuning. It now refuses both with a message, and also refuses
+  fewer than one pulse.
+
+The `soliton` module docstring gave the seed's width as
+`sqrt(|d2| / alpha)`; the code uses, correctly, `sqrt(|d2| / (2
+alpha))`, the exact width of the sech solution of the conservative
+part of the equation in this package's convention (derived in the
+docstring). Only the docstring changed.
+
+**0.14.0** fixed inputs that gave wrong answers without an error:
 
 - `output_quadrature_variance`, `output_covariance_xxpp` and the
   output-entanglement functions accepted an escape fraction `eta`
@@ -1508,14 +1695,30 @@ for the real tolerances). The full history is in
 
 ## Limits
 
-What 0.14.0 adds to the picture:
+What 0.15.0 adds to the picture:
+
+- **One angle for a band.** The 0.14 limit "the package does not yet
+  choose the best single angle for a band" is closed for the single
+  ring (example 20), and for the molecule's ports through
+  `quadrature_extremes` (see the docstring of
+  `optimal_band_quadrature`). The angle minimizes the average
+  variance over the band. Other goals, such as the best worst case in
+  dB, are not offered.
+- **Calibration error.** Only an error of the shot-noise reference is
+  modelled, as one offset in dB shared by every point of both traces
+  (both traces divided by the same reference). An error that differs
+  between the traces, or that changes with frequency, is not. Its
+  size, `calib_sigma_db`, has to come from your own calibration
+  record; the package cannot know it.
+
+What 0.14.0 added:
 
 - **Quadrature angle.** The best and worst angle are now found exactly
   (example 18), so results no longer carry the error of an angle scan.
   In an experiment the local oscillator usually sits at one angle for
   all frequencies; with a detuning that angle cannot be the best one
-  everywhere, and the package does not yet choose the best single
-  angle for a band.
+  everywhere, and 0.14 did not choose the best single angle for a
+  band (0.15 does; see above).
 - **Dark noise.** Two conventions are available (example 19); the
   default is still the one of earlier versions. Which one matches a
   published number depends on how that number was normalized, which

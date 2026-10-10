@@ -5,11 +5,28 @@ authors:
   - family-names: Mahim
     given-names: Tanvir M.
     orcid: "https://orcid.org/0000-0002-4550-3248"
-version: 0.14.0
-date-released: 2026-09-30
+version: 0.15.0
+date-released: 2026-10-10
 license: Apache-2.0
 repository-code: "https://github.com/TaN-MM-Org/sqzcomb"
 identifiers:
   - type: doi
     value: 10.5281/zenodo.22015375
     description: "Concept DOI for all versions; resolves to the latest release"
+references:
+  - type: article
+    title: "Overcoming the 3 dB Squeezing Extraction Limit in Silicon Carbide Microcombs with a Photonic Molecule"
+    authors:
+      - family-names: Mahim
+        given-names: Tanvir M.
+      - family-names: Rahman
+        given-names: M. Mosaddequr
+      - family-names: Mohsin
+        given-names: Abu S. M.
+    journal: "Optics Express"
+    volume: 34
+    issue: "18"
+    start: 34822
+    end: 34834
+    year: 2026
+    doi: 10.1364/OE.612248

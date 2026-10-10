@@ -1,5 +1,96 @@
 # Changelog
 
+## 0.15.0 (2026-10-10)
+
+Four silent wrong answers fixed, the uncertainty of the shot-noise
+reference carried through fitting, planning and inference, and the
+best fixed local-oscillator angle for a band.
+
+### Fixed
+
+- `output_variance_ports` and `classical_noise_variance_ports` gave a
+  mode named twice among the modes read twice its weight, so the
+  variance came out doubled: for the twin beam of README example 5
+  (`eta = 0.8`, `omega = 0`, `phi = 0.3`) `mode_index=[1, 1]`, or
+  `port_mode=[1, 1]` with the default `mode_index`, returned 3.84444
+  instead of 1.92222 (the single-mode value, which the separate
+  `output_quadrature_variance` path also gives). The noise added by
+  `classical_noise_variance_ports` doubled the same way (0.061779
+  instead of 0.030889 in the test case). Now a ValueError. A repeated
+  port with distinct modes read is still accepted and gives the same
+  number as before. Test: `test_repeated_read_mode_is_refused_not_doubled`.
+- `noise_spectrum_db` returned the antisqueezed curve for every
+  quadrature name other than `"squeezed"`: `"Squeezed"` gave +8.141 dB
+  at 1 MHz instead of the squeezed -5.210 dB (`mu = 0.5`,
+  `eta = 0.8`, `kappa_hz = 10e6`). Unknown names are now refused;
+  `"anti"` and `"antisqueezed"` give the same curve as before. Test:
+  `test_noise_spectrum_db_refuses_unknown_quadrature`.
+- A NaN efficiency passed `lossy_channel_xxpp`, and
+  `ppt_symplectic_eigenvalue` let a NaN matrix through, so
+  `output_entanglement(..., detection_efficiency=nan)`,
+  `logarithmic_negativity` and `entanglement_report` reported
+  `E_N = 0`, "not entangled" (the README twin beam has `E_N = 1.2417`,
+  0.6887 at 70 % detection). Both now raise ValueError; a non-finite
+  covariance is refused by `lossy_channel_xxpp` too. Test:
+  `test_nan_efficiency_or_covariance_gives_no_entanglement_verdict`.
+- `soliton_seed` returned an all-NaN seed for `alpha < 0` (only a
+  RuntimeWarning) and raised ZeroDivisionError for `alpha = 0`; it now
+  refuses a detuning that is not positive, and `n_pulses < 1` (which
+  returned a flat seed with no pulse). Test:
+  `test_soliton_seed_refuses_nonpositive_detuning`.
+- The `soliton` module docstring gave the seed width as
+  `sqrt(|d2| / alpha)`; the code's `sqrt(|d2| / (2 alpha))` is the
+  exact sech width in this package's convention (derivation added to
+  the docstring). Docstring only.
+- `master_output_spectrum`'s docstring said `eta` in (0, 1]; the code
+  accepts [0, 1], and `eta = 0` correctly gives the vacuum level.
+  Docstring only.
+
+### Added
+
+- `optimal_band_quadrature(M, eta, omegas, mode_index, n_modes,
+  weights=None, ...)`: the fixed LO angle that minimizes the
+  (optionally weighted) band average of the output variance, exactly
+  (the average keeps the form `c0 + c1 cos 2phi + c2 sin 2phi`), with
+  the per-frequency variance at that angle, the per-frequency optimum
+  and the penalty in dB. Checked against the eigenvectors of the
+  band-averaged covariance blocks of `output_covariance_xxpp`, a
+  181-angle scan, the real-gain closed form and the single-frequency
+  limit. README example 20.
+- `calib_sigma_db` for `fit_noise_spectra`, `plan_noise_measurement`
+  and `infer_source`: the 1-sigma error of the shot-noise reference,
+  an offset in dB shared by every point of both traces. The fit adds
+  the offset as a parameter constrained by `N(0, calib_sigma_db^2)`,
+  which is exactly the generalized least-squares fit with
+  `C = diag(sigma_db^2) + calib_sigma_db^2 (all ones)`; the planner
+  removes the offset by the Schur complement of the information
+  matrix; `infer_source` propagates it with full correlation,
+  `sigma_db^2 |g|^2 + calib_sigma_db^2 (g_sq + g_anti)^2`.
+  `NoiseFit` gets the field `calib_offset_db` (default None). Checked
+  against the explicit matrix formula built from the closed-form
+  spectra, closed-form gradients of the pure-state inversion, and
+  seeded Monte Carlo with a common offset (where the plain fit
+  scatters more than 3 times its own error bar). README example 21.
+- New test file `tests/test_calibration_band.py` (12 tests).
+
+### Changed
+
+- `optimal_quadrature` checks its inputs and builds the output matrix
+  once per frequency instead of once per frequency and angle; its
+  results are identical to 0.14.0 (tested with exact equality).
+- Type hints on `noise_spectrum_db`, `plan_noise_measurement`,
+  `infer_source` and the new function.
+- `CITATION.cff` lists the associated Optics Express paper under
+  `references`.
+- README: examples 20 and 21, the new refusals, checks, corrections
+  and limits; 195 tests (183 in 0.14.0). Examples 1 to 19 and
+  `examples/squeezing_vs_coupling.py` print the same as with 0.14.0
+  (checked by running them).
+- Nothing else changes: apart from the fixes above and the other new
+  refusal of invalid input (a non-finite covariance in
+  `lossy_channel_xxpp`), which now raise ValueError, no existing call
+  returns a different number.
+
 ## 0.14.0 (2026-09-30)
 
 Exact best quadrature angle, the whole detection budget at once, raw
