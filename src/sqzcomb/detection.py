@@ -179,9 +179,11 @@ def lossy_channel_xxpp(sigma, efficiency, hbar=2.0):
     lossy channel of the Gaussian-state formalism, applied modewise.
     """
     sigma = np.asarray(sigma, dtype=float)
-    m2 = sigma.shape[0]
-    if sigma.shape != (m2, m2) or m2 % 2:
+    m2 = sigma.shape[0] if sigma.ndim else 0
+    if sigma.ndim != 2 or sigma.shape != (m2, m2) or m2 % 2:
         raise ValueError("sigma must be a square (2n, 2n) matrix")
+    if not np.all(np.isfinite(sigma)):
+        raise ValueError("sigma holds a non-finite value (nan or inf)")
     n = m2 // 2
     etas = np.asarray(efficiency, dtype=float)
     if etas.ndim == 0:
@@ -189,7 +191,10 @@ def lossy_channel_xxpp(sigma, efficiency, hbar=2.0):
     if etas.shape != (n,):
         raise ValueError("efficiency must be a scalar or one value per "
                          "mode")
-    if np.any(etas <= 0.0) or np.any(etas > 1.0):
+    # written so that NaN fails too (fixed in 0.15: a NaN efficiency
+    # passed and turned the matrix into NaN, which the entanglement
+    # functions then reported as E_N = 0, "not entangled")
+    if not np.all((etas > 0.0) & (etas <= 1.0)):
         raise ValueError("every efficiency must be in (0, 1]")
     scale = np.concatenate([np.sqrt(etas), np.sqrt(etas)])
     Y = 0.5 * float(hbar) * np.concatenate([1.0 - etas, 1.0 - etas])

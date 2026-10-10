@@ -81,7 +81,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .spectra import _check_modes, _check_spectra_stability
+from .spectra import (_check_modes, _check_spectra_stability,
+                      _port_indices)
 
 __all__ = ["classical_noise_variance", "classical_noise_variance_ports",
            "resonance_noise_drive", "pump_noise_drive", "gain_noise_drive",
@@ -163,18 +164,9 @@ def classical_noise_variance_ports(M, gammas, eta, port_mode, omega,
         raise ValueError("eta must lie in [0, 1]")
     _check_spectra_stability(M, allow_marginal)
     drives, psds = _check_sources(m2, drives, psds)
-    ports = np.atleast_1d(np.asarray(port_mode))
-    reads = ports if mode_index is None else \
-        np.atleast_1d(np.asarray(mode_index))
-    for arr in (ports, reads):
-        if arr.size == 0 or not np.all(np.equal(np.mod(arr, 1), 0)) \
-                or np.any(arr < 0) or np.any(arr >= n):
-            raise ValueError(f"mode indices must be integers in [0, {n})")
-    ports = ports.astype(int)
-    reads = reads.astype(int)
-    if not np.all(np.isin(reads, ports)):
-        raise ValueError("mode_index must be one of the monitored port "
-                         "modes")
+    # distinct modes read (a repeated one used to double the result;
+    # fixed in 0.15), ports de-duplicated
+    ports, reads = _port_indices(port_mode, mode_index, n)
     amp_port = np.zeros(n)
     amp_port[ports] = np.sqrt(2.0 * float(eta) * gammas[ports])
     C = np.diag(np.concatenate([amp_port, amp_port]).astype(complex))

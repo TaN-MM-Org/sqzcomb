@@ -37,10 +37,15 @@ Exact facts the test suite asserts, rather than states:
   direction is understood (`allow_marginal`, see `spectra`).
 
 The sech seed uses the standard soliton asymptotics of the anomalous
-LLE (amplitude ~ sqrt(2 alpha), width ~ sqrt(|d2| / alpha), pump phase
-cos phi_0 = sqrt(8 alpha) / (pi F); T. Herr et al., Nature Photonics 8,
-145 (2014)); the *converged* answers never depend on the seed quality,
-only Newton's basin does.
+LLE (amplitude ~ sqrt(2 alpha), width ~ sqrt(|d2| / (2 alpha)), pump
+phase cos phi_0 = sqrt(8 alpha) / (pi F); T. Herr et al., Nature
+Photonics 8, 145 (2014)); the *converged* answers never depend on the
+seed quality, only Newton's basin does. (In this package's sign
+convention the dispersion term is (|d2| / 2) d^2 psi / d theta^2 for
+d2 < 0, and A sech(theta / w) solves the conservative part
+(|d2| / 2) psi'' - alpha psi + |psi|^2 psi = 0 exactly when
+A^2 = 2 alpha and w^2 = |d2| / (2 alpha), which is what `soliton_seed`
+uses; versions up to 0.14 wrote sqrt(|d2| / alpha) here.)
 """
 from __future__ import annotations
 
@@ -138,6 +143,15 @@ def soliton_seed(n, F, alpha, dispersion, n_pulses=1):
     if d2 >= 0.0:
         raise ValueError("bright-soliton seeds need anomalous "
                          "dispersion (d2 < 0 in this convention)")
+    if not (np.isfinite(float(alpha)) and float(alpha) > 0.0):
+        # sqrt(2 alpha) and the width sqrt(|d2| / (2 alpha)) need
+        # alpha > 0; before 0.15 alpha < 0 gave an all-NaN seed (with
+        # only a RuntimeWarning) and alpha = 0 a ZeroDivisionError
+        raise ValueError("a soliton seed needs a positive detuning "
+                         f"alpha (got {alpha!r}): bright solitons exist "
+                         "only for a red-detuned pump")
+    if int(n_pulses) < 1:
+        raise ValueError("n_pulses must be at least 1")
     roots = homogeneous_steady_states(F, alpha)
     rho_low = float(roots[0])
     psi_low = F / (1.0 + 1j * (alpha - rho_low))

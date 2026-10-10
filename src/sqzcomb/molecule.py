@@ -67,7 +67,8 @@ import math
 import numpy as np
 
 from .linearize import fluctuation_matrix
-from .spectra import _bath_covariance, _check_spectra_stability
+from .spectra import (_bath_covariance, _check_spectra_stability,
+                      _port_indices)
 
 
 def photonic_molecule(mu, J, delta_a=0.0, delta_b=0.0, gamma=1.0):
@@ -119,7 +120,11 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
         the rest as "above threshold".
     Mode indices must be integers in [0, n) (a negative index used to
     land on the conjugate half of the doubled vector and read the
-    quadrature at -phi).
+    quadrature at -phi). The modes read must be distinct (fixed in
+    0.15: a repeated mode, as in mode_index=[1, 1] or port_mode=[1, 1]
+    with the default mode_index, used to be counted twice and returned
+    twice the variance); a repeated port alone is harmless and is
+    de-duplicated.
     """
     gammas = np.asarray(gammas, dtype=float)
     n = gammas.size
@@ -131,20 +136,7 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     if M.shape != (2 * n, 2 * n):
         raise ValueError("M and gammas disagree on the number of modes")
     _check_spectra_stability(M, allow_marginal)
-    ports = np.atleast_1d(np.asarray(port_mode))
-    if mode_index is None:
-        mode_index = port_mode
-    reads = np.atleast_1d(np.asarray(mode_index))
-    for arr in (ports, reads):
-        if arr.size == 0 or not np.all(np.equal(np.mod(arr, 1), 0)) \
-                or np.any(arr < 0) or np.any(arr >= n):
-            raise ValueError(f"mode indices must be integers in [0, {n})")
-    ports = ports.astype(int)
-    reads = reads.astype(int)
-    if not np.all(np.isin(reads, ports)):
-        raise ValueError("mode_index must be one of the monitored port "
-                         "modes; a detector on the bus cannot see light "
-                         "that never enters the bus")
+    ports, reads = _port_indices(port_mode, mode_index, n)
 
     m2 = 2 * n
     ident = np.eye(m2, dtype=complex)

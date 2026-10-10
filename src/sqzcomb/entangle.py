@@ -57,6 +57,12 @@ def ppt_symplectic_eigenvalue(sigma4, hbar: float = 2.0) -> float:
     s = np.asarray(sigma4, dtype=float) / (0.5 * float(hbar))
     if s.shape != (4, 4):
         raise ValueError("sigma4 must be 4x4 in (x1, p1, x2, p2) order")
+    if not np.all(np.isfinite(s)):
+        # fixed in 0.15: NaN slipped through every comparison below and
+        # logarithmic_negativity then returned max(0, nan) = 0
+        raise ValueError("the covariance matrix holds a non-finite value "
+                         "(nan or inf); no entanglement verdict is "
+                         "possible")
     A, B, C = s[:2, :2], s[2:, 2:], s[:2, 2:]
     delta_t = np.linalg.det(A) + np.linalg.det(B) - 2.0 * np.linalg.det(C)
     disc = delta_t ** 2 - 4.0 * np.linalg.det(s)

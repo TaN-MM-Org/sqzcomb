@@ -77,6 +77,41 @@ def _check_modes(M, n_modes, indices):
                              f"[0, {n})")
 
 
+def _port_indices(port_mode, mode_index, n):
+    """Checked (ports, reads) of the multi-port spectra.
+
+    Every index must be an integer in [0, n). Repeating a port is
+    harmless (the bus couples to each listed mode once), so ports are
+    de-duplicated. The modes read (mode_index, or the ports when it is
+    None) form an equal-weight joint quadrature, so each mode may
+    appear only once: in 0.14.0 and earlier a repeated mode got twice
+    its weight and the variance came out doubled (fixed in 0.15).
+    """
+    ports = np.ravel(np.asarray(port_mode))
+    reads = ports if mode_index is None else \
+        np.ravel(np.asarray(mode_index))
+    for arr in (ports, reads):
+        if arr.size == 0 \
+                or not np.all(np.isfinite(arr.astype(float))) \
+                or not np.all(np.equal(np.mod(arr, 1), 0)) \
+                or np.any(arr < 0) or np.any(arr >= n):
+            raise ValueError(f"mode indices must be integers in [0, {n})")
+    reads = reads.astype(int)
+    uniq, counts = np.unique(reads, return_counts=True)
+    if np.any(counts > 1):
+        raise ValueError(
+            f"mode {int(uniq[np.argmax(counts > 1)])} is listed more than "
+            "once among the modes read; the joint quadrature needs "
+            "distinct modes (a repeated mode used to be counted twice, "
+            "doubling the variance)")
+    ports = np.unique(ports.astype(int))
+    if not np.all(np.isin(reads, ports)):
+        raise ValueError("mode_index must be one of the monitored port "
+                         "modes; a detector on the bus cannot see light "
+                         "that never enters the bus")
+    return ports, reads
+
+
 def _output_covariance(M, eta, omega, n_th_port=0.0, n_th_loss=0.0):
     m2 = M.shape[0]
     ident = np.eye(m2, dtype=complex)
@@ -116,6 +151,16 @@ def output_quadrature_variance(M, eta, omega, mode_index, n_modes,
     (which used to return twice the single-mode variance). The best
     and worst angle need no scan: see `optimal_quadrature`.
     """
+    eta = _check_quadrature_inputs(M, eta, mode_index, n_modes,
+                                   mode_index_b, n_th_port, n_th_loss,
+                                   allow_marginal)
+    S = _output_covariance(M, eta, omega, n_th_port, n_th_loss)
+    return _read_quadrature(S, n_modes, mode_index, phi, mode_index_b)
+
+
+def _check_quadrature_inputs(M, eta, mode_index, n_modes, mode_index_b,
+                             n_th_port, n_th_loss, allow_marginal):
+    """The input checks of `output_quadrature_variance`; returns eta."""
     if float(n_th_port) < 0.0 or float(n_th_loss) < 0.0:
         raise ValueError("thermal occupations must be non-negative")
     eta = _check_eta_port(eta)
@@ -124,7 +169,15 @@ def output_quadrature_variance(M, eta, omega, mode_index, n_modes,
         raise ValueError("mode_index_b must differ from mode_index: the "
                          "joint quadrature needs two different modes")
     _check_spectra_stability(M, allow_marginal)
-    S = _output_covariance(M, eta, omega, n_th_port, n_th_loss)
+    return eta
+
+
+def _read_quadrature(S, n_modes, mode_index, phi, mode_index_b=None):
+    """u^dag S u for the quadrature X_phi of one mode, or of the joint
+    mode (a + b)/sqrt(2), from the output matrix S of
+    `_output_covariance` (indices already checked)."""
+    n_modes = int(n_modes)
+    mode_index = int(mode_index)
     # u^dag z = (a e^{-i phi} + a^dag e^{i phi}) / sqrt(2) = X_phi
     # = cos(phi) x + sin(phi) p, the documented quadrature (sqzcomb
     # 0.12.1 and earlier built the conjugate vector here, i.e. read
@@ -134,7 +187,7 @@ def output_quadrature_variance(M, eta, omega, mode_index, n_modes,
         u[mode_index] = np.exp(1j * phi) / np.sqrt(2.0)
         u[n_modes + mode_index] = np.exp(-1j * phi) / np.sqrt(2.0)
     else:
-        for idx, w in ((mode_index, 0.5), (mode_index_b, 0.5)):
+        for idx, w in ((mode_index, 0.5), (int(mode_index_b), 0.5)):
             u[idx] += np.exp(1j * phi) * w
             u[n_modes + idx] += np.exp(-1j * phi) * w
     # With N giving <a a^dagger> = 1 and zero elsewhere, u^dag S u is the
@@ -292,20 +345,116 @@ def optimal_quadrature(M, eta, omega, mode_index, n_modes,
 
     Returns dict(v_min, v_max, phi_min, phi_max, mean, squeezing_db,
     antisqueezing_db); arrays over omega when omega is an array.
+
+    Since 0.15 the inputs are checked and the output matrix is built
+    once per frequency, instead of once per frequency and angle; the
+    numbers are identical to the earlier per-angle calls (tested for
+    exact equality).
     """
     w = np.asarray(omega, dtype=float)
     ws = np.atleast_1d(w)
-
-    def var(p):
-        return np.array([output_quadrature_variance(
-            M, eta, x, mode_index, n_modes, phi=p,
-            mode_index_b=mode_index_b, n_th_port=n_th_port,
-            n_th_loss=n_th_loss, allow_marginal=allow_marginal)
-            for x in ws])
-
+    var = _angle_function(M, eta, ws, mode_index, n_modes, mode_index_b,
+                          n_th_port, n_th_loss, allow_marginal)
     out = quadrature_extremes(var)
     if w.ndim == 0:
         out = {k: float(v[0]) for k, v in out.items()}
     out["squeezing_db"] = squeezing_db(out["v_min"])
     out["antisqueezing_db"] = squeezing_db(out["v_max"])
     return out
+
+
+def _angle_function(M, eta, ws, mode_index, n_modes, mode_index_b,
+                    n_th_port, n_th_loss, allow_marginal):
+    """phi -> array of output variances over the frequencies ws, each
+    exactly what `output_quadrature_variance` returns, with the checks
+    run and the output matrix S(omega) built once."""
+    eta = _check_quadrature_inputs(M, eta, mode_index, n_modes,
+                                   mode_index_b, n_th_port, n_th_loss,
+                                   allow_marginal)
+    Ss = [_output_covariance(M, eta, x, n_th_port, n_th_loss) for x in ws]
+
+    def var(p):
+        return np.array([_read_quadrature(S, n_modes, mode_index, p,
+                                          mode_index_b) for S in Ss])
+    return var
+
+
+def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
+                            weights=None, mode_index_b=None,
+                            n_th_port: float = 0.0, n_th_loss: float = 0.0,
+                            allow_marginal: bool = False) -> dict:
+    """The best single local-oscillator angle for a band of frequencies.
+
+    In an experiment the local oscillator usually sits at one angle
+    while the analyzer records many analysis frequencies (or a detector
+    integrates over a band). With a detuning the best angle changes with
+    frequency (see `optimal_quadrature`), so no fixed angle is best
+    everywhere. This function finds, exactly, the fixed angle phi that
+    minimizes the weighted band average
+
+        V_band(phi) = sum_k w_k V(phi, omega_k) / sum_k w_k,
+
+    which is the noise power a detector integrating over the band would
+    report (take w_k as the width of the frequency bin around omega_k)
+    or the plain average of the trace (equal weights, the default).
+    Every V(phi, omega_k) has the form c0 + c1 cos 2phi + c2 sin 2phi,
+    so the weighted average has it too, and `quadrature_extremes` gives
+    the minimum and its angle with no scan.
+
+    M, eta, mode_index, n_modes, mode_index_b, n_th_port, n_th_loss,
+    allow_marginal : as in `output_quadrature_variance`.
+    omegas : the analysis frequencies of the band (units of kappa/2;
+        convert Hz with `normalized_frequency`); 1-D, finite.
+    weights : None (equal weights) or one finite value >= 0 per
+        frequency, not all zero.
+
+    Returns a dict:
+        phi : the best fixed angle, in [0, pi);
+        v_band, squeezing_db_band : the band average at phi (variance,
+            vacuum 0.5) and in dB;
+        v, squeezing_db : the variance and dB at phi at every frequency;
+        v_opt, phi_opt : the per-frequency optimum of
+            `optimal_quadrature`, for comparison;
+        penalty_db : squeezing_db - 10 log10(v_opt / 0.5) at every
+            frequency (>= 0): what holding the angle fixed costs there.
+    The angle is meaningless when the band average does not depend on
+    it (phase-insensitive light); `quadrature_extremes` notes the same.
+
+    For the photonic molecule's ports, the same answer comes from
+    ``quadrature_extremes(lambda p: np.average([output_variance_ports(
+    M, g, eta, port, w, phi=p) for w in omegas], weights=weights))``.
+    """
+    ws = np.asarray(omegas, dtype=float)
+    if ws.ndim != 1 or ws.size == 0 or not np.all(np.isfinite(ws)):
+        raise ValueError("omegas must be a non-empty 1-D array of finite "
+                         "analysis frequencies")
+    if weights is None:
+        wt = np.ones(ws.size)
+    else:
+        wt = np.asarray(weights, dtype=float)
+        if wt.shape != ws.shape:
+            raise ValueError(f"weights must have one value per frequency "
+                             f"({ws.size}), got shape {wt.shape}")
+        if not np.all(np.isfinite(wt)) or np.any(wt < 0.0) \
+                or not np.sum(wt) > 0.0:
+            raise ValueError("weights must be finite, >= 0 and not all "
+                             "zero")
+    var = _angle_function(M, eta, ws, mode_index, n_modes, mode_index_b,
+                          n_th_port, n_th_loss, allow_marginal)
+    cache = {}
+
+    def cached(p):
+        if p not in cache:
+            cache[p] = var(p)
+        return cache[p]
+
+    per = quadrature_extremes(cached)
+    band = quadrature_extremes(
+        lambda p: float(np.dot(wt, cached(p)) / np.sum(wt)))
+    phi = band["phi_min"]
+    v = var(phi)
+    return {"phi": phi, "v_band": band["v_min"],
+            "squeezing_db_band": float(squeezing_db(band["v_min"])),
+            "v": v, "squeezing_db": squeezing_db(v),
+            "v_opt": per["v_min"], "phi_opt": per["phi_min"],
+            "penalty_db": squeezing_db(v) - squeezing_db(per["v_min"])}

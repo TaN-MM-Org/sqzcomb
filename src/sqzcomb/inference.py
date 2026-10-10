@@ -72,8 +72,9 @@ __all__ = ["infer_source"]
 _VAC = 0.5
 
 
-def infer_source(sq_db, anti_db, sigma_db=None, purity=1.0,
-                 theta_rms=0.0, branch=None):
+def infer_source(sq_db: float, anti_db: float, sigma_db=None,
+                 purity: float = 1.0, theta_rms: float = 0.0,
+                 branch=None, calib_sigma_db=None) -> dict:
     """Closed-form source inference from one measured pair.
 
     sq_db, anti_db : measured squeezed and antisqueezed levels in dB
@@ -92,8 +93,17 @@ def infer_source(sq_db, anti_db, sigma_db=None, purity=1.0,
         impure source makes the answer two-valued (see the module
         docstring); None refuses in that case.
 
+    calib_sigma_db : optional 1-sigma uncertainty (dB) of the
+        shot-noise reference both levels were measured against (new in
+        0.15). It moves both measured levels by the same number of dB,
+        so it is propagated with full correlation: with g the gradient
+        of a result with respect to (sq_db, anti_db), the variance is
+        sigma_db^2 |g|^2 + calib_sigma_db^2 (g_sq + g_anti)^2. Either
+        uncertainty may be given alone.
+
     Returns dict(eta, v_s, v_a, sq_db_source, anti_db_source) plus,
-    with sigma_db, dict entries eta_sigma and sq_db_source_sigma.
+    with sigma_db or calib_sigma_db, dict entries eta_sigma and
+    sq_db_source_sigma (the total 1-sigma error bars).
     """
     s_db, a_db = float(sq_db), float(anti_db)
     if not (np.isfinite(s_db) and np.isfinite(a_db)):
@@ -106,11 +116,17 @@ def infer_source(sq_db, anti_db, sigma_db=None, purity=1.0,
         raise ValueError("theta_rms must be finite and >= 0")
     if branch not in (None, "high", "low"):
         raise ValueError("branch must be None, 'high' or 'low'")
-    out = _invert(s_db, a_db, P, th, branch)
+    sig = c_sig = 0.0
     if sigma_db is not None:
         sig = float(sigma_db)
         if not (np.isfinite(sig) and sig > 0.0):
             raise ValueError("sigma_db must be finite and positive")
+    if calib_sigma_db is not None:
+        c_sig = float(calib_sigma_db)
+        if not (np.isfinite(c_sig) and c_sig > 0.0):
+            raise ValueError("calib_sigma_db must be finite and positive")
+    out = _invert(s_db, a_db, P, th, branch)
+    if sigma_db is not None or calib_sigma_db is not None:
         h = 1e-6
         d_eta = np.zeros(2)
         d_src = np.zeros(2)
@@ -120,8 +136,18 @@ def infer_source(sq_db, anti_db, sigma_db=None, purity=1.0,
             d_eta[i] = (p["eta"] - m["eta"]) / (2.0 * h)
             d_src[i] = (p["sq_db_source"] - m["sq_db_source"]) \
                 / (2.0 * h)
-        out["eta_sigma"] = float(sig * np.linalg.norm(d_eta))
-        out["sq_db_source_sigma"] = float(sig * np.linalg.norm(d_src))
+        if calib_sigma_db is None:
+            # unchanged digit for digit from 0.14 when only sigma_db
+            out["eta_sigma"] = float(sig * np.linalg.norm(d_eta))
+            out["sq_db_source_sigma"] = float(sig
+                                              * np.linalg.norm(d_src))
+        else:
+            out["eta_sigma"] = float(np.sqrt(
+                (sig * np.linalg.norm(d_eta)) ** 2
+                + (c_sig * d_eta.sum()) ** 2))
+            out["sq_db_source_sigma"] = float(np.sqrt(
+                (sig * np.linalg.norm(d_src)) ** 2
+                + (c_sig * d_src.sum()) ** 2))
     out.pop("branch", None)
     return out
 

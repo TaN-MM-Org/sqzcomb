@@ -17,7 +17,8 @@ from .molecule import (molecule_fluctuation_matrix, molecule_threshold,
                        output_variance_ports, photonic_molecule,
                        ring_line_frequencies,
                        vernier_molecule_fluctuation_matrix)
-from .spectra import (optimal_quadrature, output_covariance_xxpp,
+from .spectra import (optimal_band_quadrature, optimal_quadrature,
+                      output_covariance_xxpp,
                       output_entanglement, output_entanglement_spectrum,
                       output_quadrature_variance, quadrature_extremes,
                       squeezing_db)
@@ -59,7 +60,7 @@ from .technical import (classical_noise_variance,
 from .pulsed import (covariance_evolution, parametric_pulse_drift,
                      temporal_mode_variance)
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -101,4 +102,6 @@ __all__ = [
     # new in 0.14
     "quadrature_extremes", "optimal_quadrature",
     "dark_equivalent_efficiency", "shot_noise_normalize",
+    # new in 0.15
+    "optimal_band_quadrature",
 ]

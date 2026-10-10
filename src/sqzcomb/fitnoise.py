@@ -54,6 +54,13 @@ quadrature variance of a Gaussian state is V(phi) = c0 + c1 cos 2 phi
 shrinks the phi-dependent part by exp(-2 sigma^2): V_jit(phi) = Vbar
 + exp(-2 sigma^2) (V(phi) - Vbar), Vbar = (V(phi) + V(phi + pi/2)) / 2
 (the same law as `phase_noise_variance`, for any angle).
+
+Shot-noise calibration error (new in 0.15). Both traces are divided by
+one shot-noise reference, so an error in it moves every point by the
+same number of dB. `fit_noise_spectra(..., calib_sigma_db=)` fits that
+common offset with a Gaussian constraint, which is exactly the fit with
+the correlated error matrix C = diag(sigma_db^2) + calib_sigma_db^2
+(all ones); see the function's docstring.
 """
 from __future__ import annotations
 
@@ -72,17 +79,31 @@ __all__ = ["NoiseFit", "fit_noise_spectra", "noise_spectrum_db",
 _VAC = 0.5
 
 
-def noise_spectrum_db(mu, eta, kappa_hz, f_hz, quadrature="squeezed",
-                      dark=0.0):
+_QUADRATURE_PHI = {"squeezed": np.pi / 2.0, "anti": 0.0,
+                   "antisqueezed": 0.0}
+
+
+def noise_spectrum_db(mu: float, eta: float, kappa_hz: float, f_hz,
+                      quadrature: str = "squeezed",
+                      dark: float = 0.0) -> np.ndarray:
     """Model spectrum in dB relative to shot noise at analysis
     frequencies f_hz (ordinary Hz), through the package's own
     input-output solver.  `dark` is a white noise floor in shot-noise
-    variance units, added before the dB conversion."""
+    variance units, added before the dB conversion.
+
+    quadrature : "squeezed" or "anti" ("antisqueezed" is accepted as
+        the same as "anti"). Any other name is refused (fixed in 0.15:
+        before, every name other than "squeezed", for example
+        "Squeezed" or "sq", silently returned the antisqueezed curve).
+    """
+    if not isinstance(quadrature, str) or quadrature not in _QUADRATURE_PHI:
+        raise ValueError(f"quadrature must be 'squeezed' or 'anti' "
+                         f"(got {quadrature!r})")
     f = np.atleast_1d(np.asarray(f_hz, dtype=float))
     kappa = 2.0 * np.pi * float(kappa_hz)
     om = 4.0 * np.pi * f / kappa                 # units of kappa/2
     M = single_mode_parametric(float(mu))
-    phi = np.pi / 2.0 if quadrature == "squeezed" else 0.0
+    phi = _QUADRATURE_PHI[quadrature]
     v = np.array([output_quadrature_variance(M, float(eta), o, 0, 1,
                                              phi=phi) for o in om])
     v = v + float(dark)
@@ -103,7 +124,11 @@ class NoiseFit:
         fitted parameters (absent keys were held fixed).
     chi2, chi2_dof : when measurement sigmas were provided.
     model_sq_db, model_anti_db : fitted model curves at the data
-        frequencies (None for a quadrature not supplied).
+        frequencies (None for a quadrature not supplied), relative to
+        the true shot-noise level (without `calib_offset_db`).
+    calib_offset_db : with `calib_sigma_db` (new in 0.15), the fitted
+        common error of the shot-noise reference in dB: the data are
+        modelled as the curves above plus this offset. None otherwise.
     """
 
     mu: float
@@ -115,10 +140,12 @@ class NoiseFit:
     chi2_dof: int | None
     model_sq_db: np.ndarray | None
     model_anti_db: np.ndarray | None
+    calib_offset_db: float | None = None
 
 
 def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
-                      kappa_hz=None, fit_dark=False) -> NoiseFit:
+                      kappa_hz=None, fit_dark=False,
+                      calib_sigma_db=None) -> NoiseFit:
     """Fit (mu, eta[, kappa, dark]) to measured noise spectra.
 
     f_hz : (n,) analysis frequencies (ordinary Hz, positive).
@@ -132,6 +159,23 @@ def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
         fixed; otherwise it is fitted (both traces required).
     fit_dark : also fit a white dark-noise floor common to both
         traces.
+    calib_sigma_db : optional 1-sigma uncertainty (dB) of the
+        shot-noise reference both traces were divided by (new in 0.15).
+        An error in that reference shifts every point of both traces by
+        the same number of dB, so it is not averaged away by more
+        points, and treating it as independent per-point noise
+        understates the error bars. With it, the data covariance is
+        C = diag(sigma_db^2) + calib_sigma_db^2 (all ones), and the fit
+        is the generalized least-squares fit with that C: a common
+        offset b (dB) is fitted alongside the parameters with the
+        Gaussian constraint b ~ N(0, calib_sigma_db^2). Minimizing over
+        b gives exactly r^T C^-1 r, so the estimate, the error bars
+        (the C^-1-weighted (J^T C^-1 J)^-1) and chi2 are those of the
+        correlated-error fit (checked against that matrix formula and
+        by seeded Monte Carlo in the tests). Needs sigma_db, because
+        the two kinds of error must be weighed against each other.
+        The fitted b is returned as `calib_offset_db`; sigma also holds
+        its error bar.
 
     Raises ValueError on malformed input, on an antisqueezed trace
     below shot noise, and on the under-determined single-trace case.
@@ -183,6 +227,16 @@ def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
         if np.any(sig <= 0.0) or not np.all(np.isfinite(sig)):
             raise ValueError("sigma_db must be finite and positive")
         w = 1.0 / sig
+    calib = calib_sigma_db is not None
+    if calib:
+        if sigma_db is None:
+            raise ValueError(
+                "calib_sigma_db needs sigma_db: the per-point and the "
+                "common calibration uncertainty must both be stated to "
+                "be weighed against each other")
+        c_sig = float(calib_sigma_db)
+        if not (np.isfinite(c_sig) and c_sig > 0.0):
+            raise ValueError("calib_sigma_db must be finite and positive")
 
     # parameter vector: [logit-free mu, eta, (log kappa), (dark)]
     names = ["mu", "eta"] + (["kappa_hz"] if fit_kappa else []) \
@@ -195,6 +249,12 @@ def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
     k0 = float(np.median(f)) if fit_kappa else k_fix
     p0 = [0.5, 0.5] + ([k0] if fit_kappa else []) \
         + ([0.0] if fit_dark else [])
+    if calib:
+        # the common shot-noise offset b (dB), last in the vector
+        names.append("calib_offset_db")
+        lo.append(-np.inf)
+        hi.append(np.inf)
+        p0.append(0.0)
 
     def unpack(p):
         mu, eta = p[0], p[1]
@@ -212,7 +272,11 @@ def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
         for kind, data in traces:
             m = noise_spectrum_db(mu, eta, kap, f, quadrature=kind,
                                   dark=dark)
+            if calib:
+                m = m + p[-1]
             r.append(w * (m - data))
+        if calib:
+            r.append(np.array([p[-1] / c_sig]))   # b ~ N(0, c_sig^2)
         return np.concatenate(r)
 
     res = least_squares(resid, p0, bounds=(lo, hi), xtol=1e-14,
@@ -222,7 +286,8 @@ def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
     mu, eta, kap, dark = unpack(res.x)
     J = res.jac
     n_data = sum(t[1].size for t in traces)
-    dof = n_data - len(res.x)
+    # the constraint on b is one more datum for one more parameter
+    dof = n_data - len(res.x) + (1 if calib else 0)
     try:
         cov = np.linalg.inv(J.T @ J)
     except np.linalg.LinAlgError:
@@ -248,7 +313,8 @@ def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
     return NoiseFit(mu=float(mu), eta=float(eta), kappa_hz=float(kap),
                     dark=float(dark), sigma=sigma, chi2=chi2,
                     chi2_dof=chi2_dof, model_sq_db=msq,
-                    model_anti_db=man)
+                    model_anti_db=man,
+                    calib_offset_db=float(res.x[-1]) if calib else None)
 
 
 # ----------------------------------------------------------------------

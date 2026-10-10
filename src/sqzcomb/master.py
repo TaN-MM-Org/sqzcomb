@@ -306,7 +306,8 @@ def master_output_spectrum(H, c_ops, a, eta, omegas, phi=0.0, dims=None,
         used here (a thermal collapse operator a^dag is refused).
     a : the annihilation operator of the detected mode.
     eta : escape fraction of that mode's (amplitude-decay-1) loss into
-        the detected port, in (0, 1].
+        the detected port, in [0, 1] (eta = 0, no port, gives the
+        vacuum level 1/2).
     omegas : analysis frequencies (normalized, units of kappa/2).
     phi : quadrature angle, X_phi = (b e^{-i phi} + b^dag e^{i phi})/sqrt(2).
     dims, trunc_tol, guard : the truncation check of `steady_state`.

@@ -39,6 +39,11 @@ sweeps allowed), averages in linear power, optionally subtracts the
 dark (electronic) noise trace, and returns the level relative to the
 shot-noise trace with a standard error propagated from the scatter of
 the sweeps.
+
+The error of that shot-noise reference is shared by every point
+(new in 0.15): `plan_noise_measurement(..., calib_sigma_db=)` predicts
+the error bars it leaves, the same ones `fit_noise_spectra` reports
+with the same argument.
 """
 from __future__ import annotations
 
@@ -141,9 +146,11 @@ def _rows(mu, eta, kappa_hz, f, sig, quadratures, names, dark=0.0):
     return jac * w[:, None]
 
 
-def plan_noise_measurement(mu, eta, kappa_hz, f_hz, sigma_db=0.1,
+def plan_noise_measurement(mu: float, eta: float, kappa_hz: float, f_hz,
+                           sigma_db=0.1,
                            quadratures=("squeezed", "anti"),
-                           fit_kappa=True, fit_dark=False):
+                           fit_kappa: bool = True, fit_dark: bool = False,
+                           calib_sigma_db=None) -> dict:
     """Would this measurement determine the squeezer parameters?
 
     Give your expected operating point (mu, eta, kappa_hz), the
@@ -158,12 +165,33 @@ def plan_noise_measurement(mu, eta, kappa_hz, f_hz, sigma_db=0.1,
     Lorentzian carries only two shape numbers, so the information
     matrix is rank-deficient however many frequencies you record --
     the planner reports it before the beam time, the fit refuses after.
+
+    calib_sigma_db (new in 0.15) : 1-sigma uncertainty (dB) of the
+        shot-noise reference, an error common to every point, as in
+        `fit_noise_spectra`. The information matrix is then
+        J^T C^-1 J with C = diag(sigma_db^2) + calib_sigma_db^2 (all
+        ones), computed as the Schur complement that removes the
+        common offset (the same numbers the fit reports, tested). More
+        frequencies do not average this error away as they do
+        independent noise; the planner shows how much it adds to each
+        error bar.
     """
     f, sig, quadratures, names = _check_plan(
         mu, eta, kappa_hz, f_hz, sigma_db, quadratures, fit_kappa,
         fit_dark)
     jac = _rows(mu, eta, kappa_hz, f, sig, quadratures, names)
     fisher = jac.T @ jac
+    if calib_sigma_db is not None:
+        c_sig = float(calib_sigma_db)
+        if not (np.isfinite(c_sig) and c_sig > 0.0):
+            raise ValueError("calib_sigma_db must be finite and positive")
+        # the offset b adds the column w (= 1 / sigma_db per row) and
+        # the constraint row 1 / c_sig; eliminating b leaves
+        # F - F_pb F_pb^T / F_bb, which equals J^T C^-1 J (Woodbury)
+        wcol = np.concatenate([1.0 / sig] * len(quadratures))
+        f_pb = jac.T @ wcol
+        f_bb = float(wcol @ wcol) + 1.0 / c_sig ** 2
+        fisher = fisher - np.outer(f_pb, f_pb) / f_bb
     identifiable, cond, sigma = _invert_information(fisher, names)
     if jac.shape[0] < len(names):
         identifiable, sigma = False, None
