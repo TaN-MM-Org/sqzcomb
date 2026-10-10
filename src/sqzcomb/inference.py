@@ -5,8 +5,10 @@ The routine characterization of the 2025-2026 on-chip squeezing
 literature: measure the squeezed variance S and the antisqueezed
 variance A after all losses, then infer what the source made before
 the losses ate it (used e.g. by Ulanov et al., Nat. Commun. 16,
-10791 (2025) and by the 18-dB TFLN inference of Karnik et al.,
-arXiv:2605.27607). Under the standard model -- a PURE squeezed state
+10791 (2025); Karnik et al., arXiv:2605.27607, infer their 18 dB in
+thin-film lithium niobate with a richer distributed loss-and-squeezing
+model that also includes phase noise). Under the standard model -- a
+PURE squeezed state
 (V_s V_a = 1/4) followed by a beamsplitter loss of transmission
 eta -- the measured pair determines both unknowns in closed form:
 

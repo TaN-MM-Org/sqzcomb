@@ -307,11 +307,13 @@ def required_efficiency_db(target_db, source_db, dark_noise=0.0,
 # exp(-2 sigma^2) -- anchored in the tests against direct numerical
 # integration over the Gaussian, not trusted. Because V_anti of a
 # near-pure source is at least the inverse of V_sq, phase noise sets a
-# floor on detectable squeezing that tightens as the source improves;
-# the 2026 variance-budget analysis of integrated squeezers reaches
-# the same expression and identifies it as a dominant practical limit
-# (D. J. Dean et al., "Practical limits on integrated squeezers",
-# npj Nanophotonics (2026), doi:10.1038/s44310-026-00125-5).
+# floor on detectable squeezing that tightens as the source improves.
+# The 2026 variance-budget analysis of integrated squeezers uses the
+# same rotation law for a phase error, finds that phase noise degrades
+# squeezing mainly at very high gain, and names external loss as what
+# has limited most integrated measurements so far (D. J. Dean et al.,
+# "Practical limits on integrated squeezers", npj Nanophotonics 3, 31
+# (2026), doi:10.1038/s44310-026-00125-5).
 
 
 def phase_noise_variance(v_squeezed, v_antisqueezed, theta_rms,

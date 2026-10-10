@@ -60,7 +60,7 @@ from .technical import (classical_noise_variance,
 from .pulsed import (covariance_evolution, parametric_pulse_drift,
                      temporal_mode_variance)
 
-__version__ = "0.15.0"
+__version__ = "0.15.1"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
