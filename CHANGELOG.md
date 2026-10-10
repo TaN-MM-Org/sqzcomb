@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.15.1 (2026-10-10)
+
+Citation corrections and packaging.
+
+### Fixed (documentation)
+
+- `detection.py`: the comment on phase noise said that D. J. Dean et
+  al., "Practical limits on integrated squeezers" (npj Nanophotonics 3,
+  31 (2026)) reach the same Gaussian-average expression and call phase
+  noise "a dominant practical limit". The paper uses the same rotation
+  law for a phase error, finds that phase noise matters mainly at very
+  high gain, and names external loss as what has limited most
+  integrated measurements. The comment now says that, and gives the
+  volume and article number.
+- `inference.py`: Karnik et al., arXiv:2605.27607 was cited as an
+  example of the lumped-loss, pure-state inversion this module does.
+  They infer their 18 dB with a distributed loss-and-squeezing model
+  that also includes phase noise; the docstring now says so.
+- Packaging: the license is now given as the SPDX expression
+  `license = "Apache-2.0"` with `license-files = ["LICENSE"]`, and the
+  old license table and license classifier are gone. Building no longer
+  prints setuptools' deprecation warnings (their support ends on
+  2027-02-18). Building from source now needs setuptools 77 or newer;
+  installing the package is unchanged.
+
 ## 0.15.0 (2026-10-10)
 
 Four silent wrong answers fixed, the uncertainty of the shot-noise
