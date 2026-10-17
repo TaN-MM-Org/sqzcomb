@@ -33,7 +33,10 @@ It answers questions such as:
   with error bars? How much does an uncertain shot-noise reference
   add to those error bars?
 - Before measuring: will the planned frequencies pin down the
-  parameters at all?
+  parameters at all? And how close to threshold must the ring be
+  pumped for a target squeezing, given the losses and the jitter?
+- What are the ring's linewidth and escape efficiency, from a laser
+  sweep across one resonance?
 - What happens above threshold, or when single photons matter and the
   light is no longer Gaussian?
 - How much does classical noise (a wandering resonance, a noisy pump
@@ -51,6 +54,7 @@ why](#when-it-refuses-and-why)).
 - [Install and requirements](#install-and-requirements)
 - [Units and conventions](#units-and-conventions)
 - [Examples](#examples) (each with the output it prints)
+- [Tutorials](#tutorials) (two end-to-end scripts in `examples/`)
 - [What is in the package](#what-is-in-the-package)
 - [When it refuses, and why](#when-it-refuses-and-why)
 - [How the results are checked](#how-the-results-are-checked)
@@ -70,7 +74,8 @@ why](#when-it-refuses-and-why)).
   width of its resonance. **Escape efficiency** `eta = kappa_ex /
   kappa` is the fraction of that leakage that goes into the useful
   output port; the rest is lost inside the ring. `eta = 1/2` is
-  **critical coupling**.
+  **critical coupling**; a ring with `eta > 1/2` is **over-coupled**,
+  one with `eta < 1/2` **under-coupled**.
 - **Pump, detuning, threshold** -- the pump is the driving laser. Its
   **detuning** is how far it sits from the ring's resonance. Above the
   **threshold** pump power the ring starts to oscillate on new comb
@@ -193,8 +198,9 @@ newer. QuTiP (4.7 or newer) is needed only for `drift_from_qutip`.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with sqzcomb 0.15.0 (examples 1 to 19 print the same as with
-0.14.0). The device and pump numbers are
+printed with sqzcomb 0.16.0. Examples 1 to 21 print the same as with
+0.15.1, except one line of example 5, which 0.16.0 corrects (see
+[Corrections](#corrections)). The device and pump numbers are
 illustrative values chosen for the example, not measured data, except
 the measured pair in example 6, which is quoted from the paper named
 there.
@@ -401,7 +407,7 @@ print("... with 70 % detection:", np.round(output_entanglement_spectrum(
 log. negativity: 0.0911 (entangled: True)
 Duan sum 2.6440, bound 2.0 (Duan test fires: False)
 principal variances: [0.5795 0.9307 1.241  2.5368]
-symplectic eigenvalues: [1.0484 1.0484]
+symplectic eigenvalues: [1.0484 1.2429]
 E_N at the output: [1.2417 0.6779 0.0605]
 ... with 70 % detection: [0.6887 0.4225 0.042 ]
 ```
@@ -411,7 +417,10 @@ Inside the driven two-ring molecule the rings are entangled (`E_N >
 sharper PPT test used for `E_N` does. `principal_quadratures` finds the
 most-squeezed combination of all quadratures (0.5795 here, against 1 for
 vacuum in these units). `symplectic_eigenvalues` above 1 show the state
-is mixed. The second part uses a hand-written drift matrix of a
+is mixed. (Versions up to 0.15.1 printed `[1.0484 1.0484]` here: the
+smaller eigenvalue twice. The product of the two eigenvalues, squared,
+must equal the determinant of `sigma`, 1.6980, and only
+1.0484 x 1.2429 does.) The second part uses a hand-written drift matrix of a
 two-line twin-beam source (`da1/dt = -a1 + 0.5 a2*` and the same with 1
 and 2 swapped) and gives the entanglement a pair of detectors would
 see at each analysis frequency, with and without 70 % detection
@@ -1110,6 +1119,141 @@ error into the inferred source, taking into account that it moves the
 squeezed and antisqueezed levels together. The offset of 0.15 dB is
 made up for the example.
 
+### 22. Linewidth and escape efficiency from a transmission scan
+
+```python
+import numpy as np
+from sqzcomb import through_transmission, fit_resonance_transmission
+
+# A synthetic laser sweep across one resonance (illustrative ring:
+# kappa = 100 MHz, eta_esc = 0.8), 0.5 % noise on each point.
+f = np.linspace(-300e6, 300e6, 151)              # laser detuning, Hz
+rng = np.random.default_rng(0)
+T = through_transmission(f, 0.0, 100e6, 0.8) + rng.normal(0, 0.005, f.size)
+
+r = fit_resonance_transmission(f, T, sigma=0.005, branch="over")
+print(f"kappa = {r['kappa_hz'] / 1e6:.2f} +/- {r['sigma']['kappa_hz'] / 1e6:.2f} MHz, "
+      f"dip depth {r['depth']:.4f} +/- {r['sigma']['depth']:.4f}")
+print(f"eta_esc = {r['eta_over']:.4f} (over-coupled) or {r['eta_under']:.4f} "
+      f"(under-coupled), +/- {r['eta_sigma']:.4f}")
+print(f"kappa_ex = {r['kappa_ex_hz'] / 1e6:.2f} MHz, "
+      f"kappa_0 = {r['kappa_0_hz'] / 1e6:.2f} MHz, p = {r['p_value']:.2f}")
+
+# A resonance split by backscattering is not one Lorentzian: refused.
+split = (through_transmission(f, -50e6, 100e6, 0.3)
+         + through_transmission(f, 50e6, 100e6, 0.3) - 1.0)
+try:
+    fit_resonance_transmission(f, split + rng.normal(0, 0.005, f.size),
+                               sigma=0.005)
+except ValueError as err:
+    print("refused:", str(err).split(":")[0])
+```
+
+```
+kappa = 99.87 +/- 0.47 MHz, dip depth 0.6392 +/- 0.0016
+eta_esc = 0.8003 (over-coupled) or 0.1997 (under-coupled), +/- 0.0007
+kappa_ex = 79.93 MHz, kappa_0 = 19.94 MHz, p = 0.71
+refused: a single Lorentzian dip does not describe these data (chi^2 = 3.822e+04 for 147 degrees of freedom, p = 0)
+```
+
+`RingSpec` needs the loaded linewidth and the escape efficiency, and a
+lab gets both from one routine measurement: a slow, low-power laser
+sweep across a resonance, recording the power that passes the ring on
+the bus waveguide. The dip is a Lorentzian whose full width is the
+loaded linewidth `kappa` and whose depth is `4 eta (1 - eta)`
+(derived in the `sqzcomb.resonance` docstring from the same
+input-output relation as the noise spectra). The depth gives two
+answers, `eta` and `1 - eta`: an over-coupled and an under-coupled
+ring with the same linewidth make the same dip. The scan cannot tell
+them apart, so the fit returns both and gives `eta_esc` only for the
+branch you name. The phase of the transmitted light, or a change of
+the coupling gap, decides it. With `sigma` the fit also checks that
+one Lorentzian describes the data; a resonance split into a doublet,
+or one bent by heating at too high a power, is refused. It also
+refuses a scan that does not reach one linewidth beyond the resonance
+on both sides, or has fewer than 5 points inside the linewidth.
+
+### 23. How close to threshold for a target squeezing?
+
+```python
+from sqzcomb import gain_for_squeezing
+
+# Total efficiency 0.72 (escape 0.8 x detection 0.9), read at omega = 0.2.
+for jitter in (0.0, 0.02, 0.05):
+    r = gain_for_squeezing(-4.0, eta=0.72, omega=0.2, theta_rms=jitter)
+    print(f"jitter {1e3 * jitter:4.0f} mrad: -4 dB needs mu = {r['mu']:.4f}; "
+          f"best {r['best_db']:.2f} dB at mu = {r['mu_best']:.4f}")
+try:
+    gain_for_squeezing(-6.0, eta=0.72, omega=0.2, theta_rms=0.05)
+except ValueError as err:
+    print("refused:", err)
+```
+
+```
+jitter    0 mrad: -4 dB needs mu = 0.4443; best -5.42 dB at mu = 1.0000
+jitter   20 mrad: -4 dB needs mu = 0.4476; best -5.10 dB at mu = 0.8327
+jitter   50 mrad: -4 dB needs mu = 0.4675; best -4.54 dB at mu = 0.6791
+refused: -6 dB cannot be reached: the deepest detected squeezing with this efficiency, frequency, jitter and dark noise is -4.537 dB (at mu = 0.67911)
+```
+
+`gain_for_squeezing` answers the planning question in reverse: which
+parametric gain `mu` (threshold at 1) gives a target squeezing at the
+detector? `eta` is the total efficiency (escape times detection) and
+`omega` the analysis frequency in units of `kappa/2`. Without jitter
+the squeezing deepens all the way to threshold, and the answer comes
+from a quadratic. Jitter mixes in the antisqueezing, which grows
+quickly near threshold, so there is a best gain; beyond it more pump
+makes the result worse. The function finds that best gain, returns the
+smallest gain that reaches the target, and refuses a target that no
+gain reaches. It uses the single-mode model without detuning, which
+fails close to threshold (examples 11 and 12), so a plan that needs
+`mu` very close to 1 is optimistic.
+
+## Tutorials
+
+Two scripts in `examples/` go from synthetic "measured" data (made
+with a fixed seed from stated true values, so they print the same
+numbers everywhere) to final results with uncertainties. Each runs in
+a few seconds, and `tests/test_tutorials.py` runs both and checks
+their output.
+
+**`examples/tutorial_ring_calibration.py`**: a new ring, from two
+routine measurements to a pump plan. A transmission scan gives the
+linewidth and the escape efficiency (example 22; the ring is assumed
+over-coupled), the comb threshold power gives `g0` (example 8), and
+`gain_for_squeezing` gives the gain for -4 dB at 10 MHz with 90 %
+detection efficiency and 20 mrad of phase jitter. True values: 100 MHz,
+0.8, threshold 0.15 mW.
+
+```
+linewidth kappa      = 100.11 +/- 0.44 MHz
+escape efficiency    = 0.7996 +/- 0.0007  (over-coupled branch)
+  (under-coupled reading of the same dip: 0.2004)
+g0 / 2 pi            = 8.41 +/- 0.29 Hz
+gain for -4 dB at 10 MHz: mu = 0.4481 +/- 0.0010  (antisqueezing +6.76 dB)
+deepest reachable here:   -5.10 dB at mu = 0.8325
+```
+
+**`examples/tutorial_squeezing_measurement.py`**: a squeezing run, from
+raw spectrum-analyzer traces in dBm (20 sweeps each of the squeezed,
+antisqueezed, shot-noise and dark traces) to the squeezer's numbers.
+`shot_noise_normalize` turns the traces into dB relative to shot noise
+with error bars, `fit_noise_spectra` fits both traces with a 0.05 dB
+shot-noise calibration error, and `infer_source` gives the efficiency
+again from the pair at the lowest frequency, a separate route. True
+values: `mu = 0.6`, `eta = 0.75`, `kappa = 20 MHz`, dark noise 15 dB
+below shot noise (0.0158 in vacuum units).
+
+```
+dark noise           = 0.0158 (vacuum units, mean over frequency)
+lowest frequency     : -5.23 +/- 0.05 dB and +10.65 +/- 0.05 dB
+fit: mu    = 0.598 +/- 0.002
+     eta   = 0.749 +/- 0.002
+     kappa = 20.07 +/- 0.07 MHz
+     chi^2 / dof = 57.6 / 57
+pair at 1 MHz: eta = 0.750 +/- 0.006, source -11.81 +/- 0.10 dB
+```
+
 ## What is in the package
 
 **Classical field**
@@ -1254,6 +1398,13 @@ made up for the example.
 - `shot_noise_normalize` -- raw analyzer traces in dBm (repeated
   sweeps allowed) to dB relative to shot noise, with optional dark
   subtraction and standard errors.
+- `fit_resonance_transmission`, `through_transmission` (new in 0.16):
+  the loaded linewidth and the escape efficiency (both the over- and
+  the under-coupled answer) from a transmission scan across one
+  resonance, with error bars and a model check (example 22).
+- `gain_for_squeezing` (new in 0.16): the smallest parametric gain
+  that gives a target detected squeezing after loss, jitter and dark
+  noise, and the best gain when jitter limits it (example 23).
 
 Each function's docstring (`help(sqzcomb.output_quadrature_variance)`,
 for example) gives its inputs, units and conventions.
@@ -1352,10 +1503,24 @@ for example) gives its inputs, units and conventions.
   `optimal_band_quadrature` gets an empty or non-finite frequency
   list, or weights that are negative, not finite, all zero or of the
   wrong length.
+- (new in 0.16) the entanglement functions get a covariance matrix
+  whose determinant rounds to zero or below: it is not a valid
+  covariance, or it is so badly conditioned that double precision
+  cannot resolve its smaller symplectic eigenvalue (0.15.1 reported
+  `E_N = inf` there); `symplectic_eigenvalues` gets a matrix that is
+  not square with an even size, or holds NaN or infinity;
+- (new in 0.16) `fit_resonance_transmission` gets fewer than 8 points,
+  a scan that does not reach one linewidth beyond the resonance on both
+  sides, fewer than 5 points inside the linewidth, no dip significantly
+  deeper than zero, or (with `sigma`) data that one Lorentzian does
+  not describe (chi-square p-value below `min_p_value`, default
+  1e-6); `gain_for_squeezing` gets a target that is not negative or
+  that no gain below threshold reaches (the message gives the best
+  reachable value).
 
 ## How the results are checked
 
-195 automated tests run on every push and pull request, on Python 3.9,
+235 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest versions the package allows (NumPy 1.22.0, SciPy 1.10.0, QuTiP
 4.7.0). The five QuTiP tests are skipped when QuTiP is not installed,
@@ -1422,6 +1587,50 @@ with the tolerances the tests use:
   common offset (within 10 %); with `sigma_db` alone it is unchanged.
 - The four fixes under [Corrections](#corrections) each have a test
   that fails on 0.14.0.
+
+**New in 0.16**
+
+- Close to threshold the output variance equals the closed form
+  `0.5 (1 - 4 eta mu / ((1 + mu)^2 + omega^2))` and stays positive:
+  relative 1e-10 at `eta = 0.99` up to `mu = 0.999999`; at `eta = 1`,
+  1e-7 at `mu = 0.999`, 1e-6 at `0.9999` and 1e-3 at `0.99999`, through
+  `output_quadrature_variance`, `optimal_quadrature`,
+  `optimal_band_quadrature`, `output_variance_ports` and
+  `quadrature_extremes`. Away from threshold the new summation agrees
+  with 0.15.1 to rounding (largest relative difference 1.1e-14 over 900
+  random single-ring, molecule and best-angle cases with `|mu| <= 0.95`).
+- `E_N = 2r` for two-mode squeezed vacua up to `r = 6` (relative
+  1e-7), and `E_N = -ln(2 V_min)` with the closed-form `V_min` for a
+  twin beam at 90 % escape up to `mu = 0.9999` (relative 1e-6).
+- `symplectic_eigenvalues` equals an independent Williamson
+  calculation (the eigenvalues of `sigma^(1/2) (i Omega) sigma^(1/2)`)
+  to 1e-10, and the product of its values squared equals `det sigma`.
+- `through_transmission` equals the through-port amplitude
+  `2 eta G - 1` built from the package's own drift matrix and
+  resolvent (relative 1e-14 at 35 detunings and efficiencies), and its
+  on-resonance value equals `((kappa_0 - kappa_ex) / (kappa_0 +
+  kappa_ex))^2`. The phase of that amplitude turns by `2 pi` across an
+  over-coupled resonance and returns across an under-coupled one.
+  Noise-free scans give back the linewidth and the efficiency to a
+  relative 1e-9 (1e-8 with a tilted baseline); over 120 seeded noisy
+  scans the scatter of the linewidth, depth, center, efficiency and
+  `kappa_ex` is between 0.75 and 1.3 times the reported error bars.
+- `gain_for_squeezing` reproduces its target through
+  `output_quadrature_variance` (1e-10 dB); without jitter its best
+  value equals the threshold limit `10 log10(1 - 4 eta / (4 +
+  omega^2))` (1e-6 dB); with jitter its best gain and its answer agree
+  with a scan of 1501 gains (within two grid steps; the answer lies
+  between the scan points around the first crossing).
+- Speed changes are checked against the old code, kept in the tests:
+  `fluctuation_matrix` is bit-identical to the old double loop
+  (including modes off the grid), and `noise_spectrum_db` and
+  `parametric_spectra_model` equal the per-frequency
+  `output_quadrature_variance` path exactly.
+- The two tutorials run, print exactly the output quoted in their
+  docstrings and in this README, and recover their true values within
+  three of their printed error bars.
+- The three fixes under [Corrections](#corrections) each have a test
+  that fails on 0.15.1.
 
 **Photonic molecules**
 
@@ -1608,7 +1817,43 @@ with the tolerances the tests use:
 
 ## Corrections
 
-**0.15.0 (this release)** fixes four inputs that gave a wrong answer
+**0.16.0 (this release)** fixes three wrong answers. Each fix has a
+test (`tests/test_audit_016.py`) that fails on 0.15.1:
+
+- `symplectic_eigenvalues` returned the smallest eigenvalue twice and
+  lost the larger ones whenever they differed: `diag(1, 3, 1, 3)` (two
+  thermal modes) gave `[1, 1]` instead of `[1, 3]`, and example 5
+  printed `[1.0484 1.0484]` instead of `[1.0484 1.2429]`. States whose
+  eigenvalues are all equal (every pure state, vacuum, one mode) were
+  not affected, and neither was the entanglement test, which uses the
+  smallest one.
+- Close to threshold the output variance lost its accuracy and could
+  come out negative: `single_mode_parametric(0.9999)` at `eta = 1`,
+  `omega = 0`, `phi = pi/2` gave -2.107e-8 instead of 1.250e-9, and
+  `mu = 0.999999` at `eta = 0.99` gave 4.920e-3 instead of 5.000e-3
+  (0.07 dB too much squeezing). The variance was read off the
+  assembled output matrix, which subtracts numbers of the size of the
+  antisqueezed variance. It is now summed from the rows of the
+  transfer matrices, a sum of non-negative terms, in
+  `output_quadrature_variance` and `output_variance_ports`, and
+  `optimal_quadrature`, `optimal_band_quadrature` and (for a scalar
+  function) `quadrature_extremes` evaluate the variance at the best
+  angle instead of computing `c0 - r`. Away from threshold the
+  numbers agree with 0.15.1 to rounding (see [How the results are
+  checked](#how-the-results-are-checked)); every other README example
+  prints the same digits.
+- The logarithmic negativity lost its accuracy for strongly entangled
+  pairs: a two-mode squeezed vacuum with `r = 4` gave `E_N = 7.99931`
+  instead of 8, and with `r = 5` gave `inf` instead of 10;
+  `output_entanglement` for a twin beam at 90 % escape gave 2.31444
+  instead of 2.30258 at `mu = 0.999` and `inf` at `mu = 0.9999`. The
+  formula `nu^2 = (Delta - sqrt(Delta^2 - 4 det)) / 2` subtracts two
+  nearly equal numbers there; the same number is now computed as
+  `2 det / (Delta + sqrt(Delta^2 - 4 det))`. A matrix whose
+  determinant rounds to zero or below is refused instead of giving
+  `E_N = inf`.
+
+**0.15.0** fixed four inputs that gave a wrong answer
 without an error. Each fix has a test that fails on 0.14.0:
 
 - `output_variance_ports` and `classical_noise_variance_ports` counted
@@ -1695,7 +1940,32 @@ for the real tolerances). The full history is in
 
 ## Limits
 
-What 0.15.0 adds to the picture:
+What 0.16.0 adds to the picture:
+
+- **Precision near threshold.** The output variances now keep their
+  accuracy close to threshold, but a covariance matrix cannot: its
+  entries carry a rounding error of about 1e-16 times the antisqueezed
+  variance, so the squeezed direction is lost once the ratio of the
+  two passes about 1e14. `output_covariance_xxpp`, `output_entanglement`
+  and the other matrix functions are affected there (for example the
+  twin beam at full escape and `mu = 0.9999`, where the ratio is near
+  1e17). The negativity refuses a matrix whose determinant has
+  rounded to zero; short of that, expect an error of roughly 1e-16
+  times that ratio, relative in the smallest variance and absolute in
+  `E_N` (at `mu = 0.999` and full escape, a ratio of 1.6e13: `E_N` is
+  15.20156 against the exact 15.20080).
+- **Transmission scans.** The fit assumes one Lorentzian dip on a
+  flat or linearly tilted background. A doublet, a dip bent by heating
+  or Kerr shifts, or a Fano shape is not modeled; with measurement
+  errors given, such data are refused by the chi-square test, but
+  without them the fit cannot tell, so look at the residuals. The
+  scan cannot decide between over- and under-coupling.
+- **Gain planning.** `gain_for_squeezing` uses the single-mode model
+  without detuning, with the same efficiency for the whole chain. It
+  does not convert the gain into a pump power, because that depends
+  on the device (for a Kerr comb, on the detuning and the comb state).
+
+What 0.15.0 added:
 
 - **One angle for a band.** The 0.14 limit "the package does not yet
   choose the best single angle for a band" is closed for the single

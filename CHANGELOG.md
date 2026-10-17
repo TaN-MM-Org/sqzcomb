@@ -1,5 +1,148 @@
 # Changelog
 
+## 0.16.0 (2026-10-17)
+
+Three wrong answers fixed (symplectic eigenvalues, the output variance
+close to threshold, the negativity of strongly entangled pairs), the
+linewidth and escape efficiency from a transmission scan, the gain a
+target squeezing needs, faster drift matrices and noise models, and
+two end-to-end tutorials.
+
+### Fixed
+
+- `symplectic_eigenvalues` returned the smallest eigenvalue twice and
+  dropped the larger ones whenever they differed: `diag(1, 3, 1, 3)`
+  gave `[1, 1]` instead of `[1, 3]`, and README example 5 printed
+  `[1.0484 1.0484]` instead of `[1.0484 1.2429]` (the product of the
+  correct pair, squared, is `det sigma` = 1.6980). States whose
+  eigenvalues are all equal (pure states, vacuum, one mode) and the
+  entanglement test, which uses the smallest one, were not affected.
+  It now also refuses a matrix that is not square with an even size,
+  or holds NaN or infinity. Test:
+  `test_symplectic_eigenvalues_are_not_duplicated`.
+- Close to threshold the output variance lost its accuracy and could
+  be negative. `output_quadrature_variance` for
+  `single_mode_parametric(0.9999)` at `eta = 1`, `omega = 0`,
+  `phi = pi/2` gave -2.107e-8 instead of 1.250e-9 (closed form), and
+  for `mu = 0.999999`, `eta = 0.99` gave 4.920e-3 instead of 5.000e-3
+  (0.07 dB too much squeezing); `optimal_quadrature` gave -2.98e-8 and
+  4.883e-3 for the same cases. Cause: the variance was read off the
+  assembled output matrix (`u^dag S u`), which subtracts numbers of the
+  size of the antisqueezed variance, and the best-angle functions
+  computed `c0 - r`, the same subtraction. The variance is now summed
+  from the rows `u^dag T` of the transfer matrices (a sum of
+  non-negative terms, with the reflected input subtracted after the
+  projection) in `output_quadrature_variance` and
+  `output_variance_ports`; `optimal_quadrature`,
+  `optimal_band_quadrature` and, for a scalar function,
+  `quadrature_extremes` evaluate the variance at the best angle. After
+  the fix the two cases above give 1.250e-9 (relative error 2e-9) and
+  5.000e-3 (relative 1e-14). Away from threshold the results agree
+  with 0.15.1 to rounding: largest relative difference 1.1e-14 over
+  900 random single-ring, molecule and best-angle cases with
+  `|mu| <= 0.95`; fitted values move at the 1e-10 level (README
+  example 7: `mu` 0.54736251263 -> 0.54736251266), and every README
+  example and `examples/squeezing_vs_coupling.py` print the same
+  digits as before. Test:
+  `test_near_threshold_variance_is_accurate_and_positive`.
+- The logarithmic negativity of strongly entangled pairs lost its
+  accuracy: a two-mode squeezed vacuum (`E_N = 2r`) gave 7.99931 at
+  `r = 4` and `inf` at `r = 5`; `output_entanglement` for a twin beam
+  at 90 % escape gave 2.31444 instead of 2.30258 at `mu = 0.999` and
+  `inf` at `mu = 0.9999` (exact: `-ln(2 V_min)`). Cause:
+  `nu^2 = (Delta - sqrt(Delta^2 - 4 det)) / 2` subtracts two nearly
+  equal numbers. It is now `2 det / (Delta + sqrt(Delta^2 - 4 det))`,
+  the same number without the subtraction: 8.000000000, 10.00000001,
+  2.302582842 and 2.302585152. A matrix whose determinant rounds to
+  zero or below (beyond double precision, or not a covariance) is now
+  refused instead of giving `E_N = inf`. Tests:
+  `test_strong_tmsv_negativity_equals_2r`,
+  `test_output_entanglement_near_threshold`,
+  `test_singular_covariance_is_refused_not_infinite`.
+
+### Added
+
+- `fit_resonance_transmission(f_hz, transmission, sigma=None,
+  branch=None, fit_slope=False)` and `through_transmission(...)`
+  (new module `sqzcomb.resonance`): the loaded linewidth and the
+  escape efficiency from a laser sweep across one resonance, the
+  measurement `RingSpec` needs. The through-port dip
+  `1 - 4 eta (1 - eta) / (1 + x^2)`, `x = 2 (f - f0) / kappa`, is the
+  mean-field form of the package's input-output relation
+  `T_ex = 2 eta G - 1`. Both escape efficiencies that fit the dip
+  (over- and under-coupled) are returned with error bars, and
+  `eta_esc` only for the branch named; a chi-square test refuses a
+  split or distorted resonance. Checked against the transfer matrix
+  built from the package's drift matrix (relative 1e-14), the
+  on-resonance form `((kappa_0 - kappa_ex) / (kappa_0 + kappa_ex))^2`
+  (critical coupling as observed by M. Cai, O. Painter
+  and K. J. Vahala, Phys. Rev. Lett. 85, 74 (2000),
+  doi:10.1103/PhysRevLett.85.74), noise-free recovery (relative
+  1e-9) and 120 seeded noisy scans (scatter within 0.75 to 1.3 times
+  the reported error bars). README example 22.
+- `gain_for_squeezing(target_db, eta, omega=0, theta_rms=0,
+  dark_noise=0, dark_in_reference=False)`: the smallest parametric
+  gain that gives a target detected squeezing, and the best gain when
+  phase jitter limits it, with a refusal (and the best reachable value)
+  for a target no gain reaches. Checked against
+  `output_quadrature_variance` (1e-10 dB), the threshold limit
+  `10 log10(1 - 4 eta / (4 + omega^2))` and a 1501-point scan of the
+  gain. README example 23.
+- New test files `tests/test_audit_016.py` (21 tests),
+  `tests/test_resonance.py` (9), `tests/test_gain_planning.py` (8)
+  and `tests/test_tutorials.py` (2).
+
+### Changed
+
+- `fluctuation_matrix` builds its matrix with index arrays instead of
+  a double Python loop; `noise_spectrum_db` and
+  `parametric_spectra_model` run the input checks once and build each
+  frequency's resolvent once (see Performance).
+- `optimal_quadrature`: `v_min` and `v_max` are the variances at
+  `phi_min` and `phi_max` (exactly `output_quadrature_variance` there)
+  instead of `c0 -/+ r`; the angles and `mean` are unchanged. The 0.15
+  test that compared `v_min` with `c0 - r` bit for bit now checks the
+  angles bit for bit and the variances against the scalar path.
+- `quadrature_extremes` with a scalar function makes two more calls,
+  at the two angles it found.
+- Type hints on the new functions and on `output_quadrature_variance`,
+  `optimal_quadrature`, `quadrature_extremes`, `output_variance_ports`,
+  `symplectic_eigenvalues` and `fluctuation_matrix`.
+- README: examples 22 and 23, a Tutorials section, the corrected line
+  of example 5, the new refusals, checks, corrections and limits;
+  235 tests (195 in 0.15.1).
+
+### Performance
+
+Measured on the same machine (2 shared CPUs) as the median of 9 to 31
+calls, old and new code run in turn, three times; the range over the
+three runs is given because the machine was shared:
+
+- `fluctuation_matrix`: 40 to 57 times faster at 64 modes (13 ms ->
+  0.2 ms), 6 to 20 times at 128 and 10 times at 256 (0.17-0.26 s ->
+  16-25 ms). Bit-identical, including modes off the grid: tested
+  against the old loop, kept in the test
+  (`test_fluctuation_matrix_is_bit_identical_to_the_loop`).
+- `noise_spectrum_db` (25 frequencies): 2.7 to 9 times faster.
+  Bit-identical to calling `output_quadrature_variance` at each
+  frequency, the old structure, kept in the test
+  (`test_noise_models_are_bit_identical_to_the_per_call_path`); the
+  same holds for `parametric_spectra_model`.
+- As a result `fit_noise_spectra` (README example 7) is 1.8 to 2.2
+  times faster and `plan_noise_measurement` 1.9 to 2.9 times.
+
+### Tutorials
+
+- `examples/tutorial_ring_calibration.py`: transmission scan ->
+  linewidth and escape efficiency, threshold -> `g0`, then the gain
+  for -4 dB with loss and jitter, all with error bars.
+- `examples/tutorial_squeezing_measurement.py`: raw analyzer traces in
+  dBm -> shot-noise-normalized spectra -> fit with a shot-noise
+  calibration error -> the efficiency again from one measured pair.
+- Both use synthetic data made with a fixed seed from stated true
+  values, run in a few seconds, and print the output quoted in their
+  docstrings and in the README; `tests/test_tutorials.py` checks it.
+
 ## 0.15.1 (2026-10-10)
 
 Citation corrections and packaging.
