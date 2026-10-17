@@ -129,13 +129,21 @@ def test_optimal_quadrature_is_bit_identical_to_the_per_angle_path():
             output_quadrature_variance(M, 0.8, x, 0, 1, phi=p, **kw)
             for x in ws]))
         new = optimal_quadrature(M, 0.8, ws, 0, 1, **kw)
-        for k in ("v_min", "v_max", "phi_min", "phi_max", "mean"):
+        for k in ("phi_min", "phi_max", "mean"):
             assert np.array_equal(new[k], ref[k])
+        # since 0.16 the extremes are the variances at the two angles
+        # (exactly the scalar path there), not c0 -/+ r; away from
+        # threshold the two agree to rounding
+        for k, a in (("v_min", "phi_min"), ("v_max", "phi_max")):
+            at = [output_quadrature_variance(M, 0.8, x, 0, 1, phi=p, **kw)
+                  for x, p in zip(ws, new[a])]
+            assert np.array_equal(new[k], at)
+            assert np.allclose(new[k], ref[k], rtol=1e-13, atol=0)
     ref = quadrature_extremes(lambda p: np.array([
         output_quadrature_variance(TWIN, 0.8, x, 0, 2, phi=p,
                                    mode_index_b=1) for x in ws]))
     new = optimal_quadrature(TWIN, 0.8, ws, 0, 2, mode_index_b=1)
-    assert np.array_equal(new["v_min"], ref["v_min"])
+    assert np.allclose(new["v_min"], ref["v_min"], rtol=1e-13, atol=0)
 
 
 # ----------------------------------------------------------------------
