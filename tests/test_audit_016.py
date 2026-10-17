@@ -89,9 +89,15 @@ def _tmsv(r):
 def test_strong_tmsv_negativity_equals_2r(r):
     """E_N = 2r exactly. 0.15.1 took nu^2 = (Delta - sqrt(Delta^2 -
     4 det)) / 2, which cancels: r = 4 gave 7.99931 and r = 5 gave inf
-    (with a divide-by-zero warning)."""
+    (with a divide-by-zero warning).
+
+    The tolerance follows the limit stated in the README: an absolute
+    error in E_N of roughly 1e-16 times the ratio of the largest to the
+    smallest variance, here exp(4 r). The test allows ten times that.
+    The exact digits depend on the machine: at r = 6 one machine gave
+    12.00000014 and the GitHub runners 11.99999777 (bound 2.6e-5)."""
     en = logarithmic_negativity(_tmsv(r), 0, 1)
-    assert en == pytest.approx(2.0 * r, rel=1e-7)
+    assert en == pytest.approx(2.0 * r, rel=0, abs=1e-15 * np.exp(4.0 * r))
 
 
 def test_singular_covariance_is_refused_not_infinite():
