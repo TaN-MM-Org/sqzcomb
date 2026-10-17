@@ -70,7 +70,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 from .linearize import single_mode_parametric
-from .spectra import output_quadrature_variance
+from .spectra import _angle_function
 
 __all__ = ["NoiseFit", "fit_noise_spectra", "noise_spectrum_db",
            "ModelFit", "fit_spectra_model", "parametric_spectra_model",
@@ -104,10 +104,25 @@ def noise_spectrum_db(mu: float, eta: float, kappa_hz: float, f_hz,
     om = 4.0 * np.pi * f / kappa                 # units of kappa/2
     M = single_mode_parametric(float(mu))
     phi = _QUADRATURE_PHI[quadrature]
-    v = np.array([output_quadrature_variance(M, float(eta), o, 0, 1,
-                                             phi=phi) for o in om])
+    v = _single_mode_spectra(M, float(eta), om, (phi,))[0]
     v = v + float(dark)
     return 10.0 * np.log10(v / _VAC)
+
+
+def _single_mode_spectra(M, eta, om, phis):
+    """Output variances of the single-mode drift M at the normalized
+    frequencies om, one array per angle in phis. Each value is exactly
+    what `output_quadrature_variance(M, eta, o, 0, 1, phi=phi)` returns
+    (the same code), but the input checks and the stability test run
+    once and the resolvent is built once per frequency, not once per
+    frequency and angle (new in 0.16; tested for exact equality)."""
+    om = np.asarray(om, dtype=float)
+    if om.size == 0:
+        return [np.array([]) for _ in phis]
+    _, var_k = _angle_function(M, eta, om.ravel(), 0, 1, None, 0.0, 0.0,
+                               False)
+    return [np.array([var_k(k, ph) for k in range(om.size)])
+            .reshape(om.shape) for ph in phis]
 
 
 @dataclasses.dataclass
@@ -364,10 +379,8 @@ def parametric_spectra_model(detuned=False, jitter=False, dark=False):
                                    float(p.get("delta", 0.0)))
         ph = float(p["phi_sq"]) if detuned else np.pi / 2.0
         eta = float(p["eta"])
-        v_sq = np.array([output_quadrature_variance(M, eta, o, 0, 1,
-                                                    phi=ph) for o in om])
-        v_an = np.array([output_quadrature_variance(
-            M, eta, o, 0, 1, phi=ph + np.pi / 2.0) for o in om])
+        v_sq, v_an = _single_mode_spectra(M, eta, np.atleast_1d(om),
+                                          (ph, ph + np.pi / 2.0))
         if jitter:
             t = float(p["theta_rms"])
             v_sq, v_an = (jitter_average(v_sq, v_an, t),

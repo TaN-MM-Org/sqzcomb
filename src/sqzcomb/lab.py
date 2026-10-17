@@ -56,7 +56,8 @@ from .physical import RingSpec
 
 __all__ = ["plan_noise_measurement", "design_noise_frequencies",
            "ring_from_threshold", "save_spectra_csv",
-           "load_spectra_csv", "shot_noise_normalize"]
+           "load_spectra_csv", "shot_noise_normalize",
+           "gain_for_squeezing"]
 
 _COND_MAX = 1e10
 _QUADS = ("squeezed", "anti")
@@ -469,3 +470,120 @@ def shot_noise_normalize(trace_dbm, shot_dbm, dark_dbm=None):
     sig = None if var is None else \
         (10.0 / np.log(10.0)) * np.sqrt(var) / R
     return {"db": db, "sigma_db": sig, "dark_variance": dark_var}
+
+
+def _detected_pair(mu, eta, omega, theta_rms, dark_noise,
+                   dark_in_reference):
+    """Detected squeezed and antisqueezed variances of the single-mode
+    parametric output (closed forms, see `fitnoise`), after LO jitter
+    and dark noise."""
+    from .detection import detected_variance, phase_noise_variance
+    w2 = omega * omega
+    v_sq = 0.5 * (1.0 - 4.0 * eta * mu / ((1.0 + mu) ** 2 + w2))
+    v_an = 0.5 * (1.0 + 4.0 * eta * mu / ((1.0 - mu) ** 2 + w2))
+    s = phase_noise_variance(v_sq, v_an, theta_rms)
+    a = phase_noise_variance(v_an, v_sq, theta_rms)
+    return (detected_variance(s, 1.0, dark_noise, dark_in_reference),
+            detected_variance(a, 1.0, dark_noise, dark_in_reference))
+
+
+def gain_for_squeezing(target_db: float, eta: float, omega: float = 0.0,
+                       theta_rms: float = 0.0, dark_noise: float = 0.0,
+                       dark_in_reference: bool = False,
+                       mu_max: float = 1.0 - 1e-9) -> dict:
+    """The smallest parametric gain that reaches a target squeezing.
+
+    The planning question before a squeezing run: how hard must the
+    resonator be pumped (how close to threshold) for the detector to
+    show `target_db` (negative, dB relative to shot noise)? Model: the
+    single-mode parametric output of `single_mode_parametric(mu)` (no
+    detuning), read at the squeezed quadrature, whose detected
+    variances are the closed forms
+
+        V_sq   = 1/2 [1 - 4 eta mu / ((1 + mu)^2 + omega^2)],
+        V_anti = 1/2 [1 + 4 eta mu / ((1 - mu)^2 + omega^2)],
+
+    eta : total efficiency, the escape efficiency times the detection
+        efficiency (loss after the port only rescales eta in these
+        forms, which is why one number suffices);
+    omega : analysis frequency in units of kappa/2 (convert Hz with
+        `normalized_frequency`);
+    theta_rms, dark_noise, dark_in_reference : LO phase jitter (rad)
+        and electronic noise (vacuum units), applied as in
+        `phase_noise_variance` and `detected_variance`.
+
+    Without jitter the detected squeezing deepens all the way to
+    threshold and the answer is the smaller root of the quadratic
+    q mu^2 + (2 q - 4 eta) mu + q (1 + omega^2) = 0 with
+    q = 1 - 2 V_target (dark noise first removed); jitter mixes in the
+    antisqueezing, which grows without bound near threshold at
+    omega = 0, so there is a best gain, beyond which more pump makes
+    the result worse. The function finds that best gain numerically
+    (bounded search on (0, mu_max]), refuses a target it cannot reach
+    (and says what can be reached), and otherwise returns the smallest
+    gain that reaches the target (root bracketed on (0, mu_best)).
+
+    mu_max : the largest gain considered (default just below the
+        threshold mu = 1). The linearized model itself fails close to
+        threshold (see `sqzcomb.kerrpo` and `sqzcomb.master`), so a
+        plan that needs mu within a few 1e-3 of 1 is optimistic.
+
+    Returns dict(mu, detected_db, anti_db (detected antisqueezing at
+    mu), mu_best, best_db (the deepest reachable squeezing and the gain
+    that gives it), best_at_limit (True when the best lies at mu_max,
+    i.e. it keeps improving toward threshold)).
+    """
+    from scipy.optimize import brentq, minimize_scalar
+    from .detection import _check_dark, _check_eta
+    t_db = float(target_db)
+    if not (np.isfinite(t_db) and t_db < 0.0):
+        raise ValueError("target_db must be a finite, negative number of "
+                         "dB (squeezing below shot noise)")
+    eta = _check_eta(eta)
+    w = float(omega)
+    if not np.isfinite(w):
+        raise ValueError("omega must be finite")
+    th = float(theta_rms)
+    if not (np.isfinite(th) and th >= 0.0):
+        raise ValueError("theta_rms must be finite and >= 0")
+    dark = _check_dark(dark_noise)
+    mmax = float(mu_max)
+    if not (0.0 < mmax < 1.0):
+        raise ValueError("mu_max must lie in (0, 1): below threshold")
+    v_t = 0.5 * 10.0 ** (t_db / 10.0)
+
+    def v_of(mu):
+        return _detected_pair(mu, eta, w, th, dark, dark_in_reference)[0]
+
+    if th == 0.0:
+        mu_best = mmax          # monotone: deeper all the way up
+    else:
+        res = minimize_scalar(v_of, bounds=(0.0, mmax), method="bounded",
+                              options={"xatol": 1e-12})
+        mu_best = float(res.x)
+        if v_of(mmax) <= v_of(mu_best):
+            mu_best = mmax
+    v_best = v_of(mu_best)
+    best_db = float(10.0 * np.log10(v_best / 0.5))
+    if not v_best <= v_t:
+        raise ValueError(
+            f"{t_db:g} dB cannot be reached: the deepest detected "
+            f"squeezing with this efficiency, frequency, jitter and dark "
+            f"noise is {best_db:.4g} dB (at mu = {mu_best:.6g})")
+    if th == 0.0 and not dark_in_reference:
+        # closed form: remove the dark noise, then the quadratic
+        q = 1.0 - 2.0 * (v_t - dark)
+        b = 2.0 * q - 4.0 * eta
+        c = q * (1.0 + w * w)
+        disc = max(b * b - 4.0 * q * c, 0.0)
+        # smaller root, written without cancellation (b < 0 here)
+        mu = (2.0 * c) / (-b + np.sqrt(disc))
+    else:
+        mu = brentq(lambda m: v_of(m) - v_t, 0.0, mu_best, xtol=1e-15,
+                    rtol=4.0 * np.finfo(float).eps)
+    mu = float(min(mu, mu_best))
+    v_s, v_a = _detected_pair(mu, eta, w, th, dark, dark_in_reference)
+    return {"mu": mu, "detected_db": float(10.0 * np.log10(v_s / 0.5)),
+            "anti_db": float(10.0 * np.log10(v_a / 0.5)),
+            "mu_best": float(mu_best), "best_db": best_db,
+            "best_at_limit": bool(mu_best == mmax)}

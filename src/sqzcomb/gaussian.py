@@ -110,22 +110,35 @@ def covariance_xxpp(V, hbar=2.0):
     return float(hbar) * 0.5 * (sigma + sigma.T)
 
 
-def symplectic_eigenvalues(sigma, hbar=2.0):
+def symplectic_eigenvalues(sigma, hbar: float = 2.0) -> np.ndarray:
     """Williamson symplectic spectrum of an xxpp covariance matrix.
 
-    Returns the n symplectic eigenvalues, each >= hbar/2 for a physical
-    state (equality for a pure mode). Computed as the positive
-    eigenvalues of i Omega sigma with Omega the xxpp symplectic form.
+    Returns the n symplectic eigenvalues in ascending order, each
+    >= hbar/2 for a physical state (equality for a pure mode), in the
+    units of sigma. Computed from the eigenvalues of i Omega sigma with
+    Omega the xxpp symplectic form, which come in pairs +/- nu.
+
+    Fixed in 0.16: the pairs were kept as 2n absolute values and the
+    smallest n returned, so every eigenvalue came twice and the larger
+    ones were lost: diag(1, 3, 1, 3) gave [1, 1] instead of [1, 3], and
+    README example 5 printed [1.0484 1.0484] for [1.0484 1.2429]. A
+    state whose eigenvalues are all equal (every pure state, vacuum,
+    a single mode) was not affected.
     """
     sigma = np.asarray(sigma, dtype=float)
-    m2 = sigma.shape[0]
+    m2 = sigma.shape[0] if sigma.ndim == 2 else 0
+    if sigma.ndim != 2 or sigma.shape != (m2, m2) or m2 == 0 or m2 % 2:
+        raise ValueError("sigma must be a square (2n, 2n) xxpp matrix")
+    if not np.all(np.isfinite(sigma)):
+        raise ValueError("sigma holds a non-finite value (nan or inf)")
     n = m2 // 2
     eye = np.eye(n)
     omega = np.block([[np.zeros((n, n)), eye], [-eye, np.zeros((n, n))]])
     ev = np.linalg.eigvals(1j * omega @ sigma)
-    nu = np.sort(np.abs(ev.real[np.abs(ev.imag) < 1e-9 * max(1.0, np.max(np.abs(ev)))]))
-    # eigenvalues come in +/- pairs; keep one of each
-    return nu[nu > 0][:n] if nu[nu > 0].size >= n else np.sort(np.abs(ev))[m2 - n:]
+    # for a positive-definite sigma the eigenvalues are real, +/- nu_k
+    # (any imaginary part is rounding); sorted by size the absolute
+    # values pair up as nu_1, nu_1, nu_2, nu_2, ...: keep one of each
+    return np.sort(np.abs(ev.real))[::2]
 
 
 def drift_from_qutip(H, gammas):

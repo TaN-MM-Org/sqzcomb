@@ -123,10 +123,78 @@ def _output_covariance(M, eta, omega, n_th_port=0.0, n_th_loss=0.0):
     return S
 
 
-def output_quadrature_variance(M, eta, omega, mode_index, n_modes,
-                               phi=0.0, mode_index_b=None,
-                               n_th_port=0.0, n_th_loss=0.0,
-                               allow_marginal=False):
+def _resolvent(M, omega):
+    """G(omega) = (-i omega I - M)^-1."""
+    m2 = M.shape[0]
+    return np.linalg.inv(-1j * omega * np.eye(m2, dtype=complex) - M)
+
+
+def _bath_diagonal(m2, n_bar):
+    """Diagonal of `_bath_covariance` (the bath matrices are diagonal)."""
+    half = m2 // 2
+    return np.concatenate([np.full(half, float(n_bar) + 1.0),
+                           np.full(half, float(n_bar))])
+
+
+def _variance_from_rows(rows, baths):
+    """sum_c sum_k N_c,kk |r_c,k|^2 for the rows r_c = u^dag T_c of the
+    transfer matrices T_c and the diagonals N_c,kk of the bath matrices.
+
+    This equals u^dag (sum_c T_c N_c T_c^dag) u (each N_c is diagonal
+    and >= 0), but it is a sum of non-negative terms and keeps its
+    accuracy near threshold. Forming the matrix first and then the
+    quadratic form subtracts numbers of the size of the antisqueezed
+    variance, which lost the squeezed one (fixed in 0.16; see the
+    CHANGELOG). The callers also subtract the identity part of T_ex
+    (the reflected input) after projecting on u, not inside the matrix,
+    for the same reason."""
+    total = 0.0
+    for r, nd in zip(rows, baths):
+        total += float(np.dot(r.real * r.real + r.imag * r.imag, nd))
+    return total
+
+
+def _quadrature_u(n_modes, mode_index, phi, mode_index_b=None):
+    """The vector u with u^dag z = X_phi of one mode, or of the joint
+    mode (a + b)/sqrt(2) (indices already checked)."""
+    n_modes = int(n_modes)
+    mode_index = int(mode_index)
+    # u^dag z = (a e^{-i phi} + a^dag e^{i phi}) / sqrt(2) = X_phi
+    # = cos(phi) x + sin(phi) p, the documented quadrature (sqzcomb
+    # 0.12.1 and earlier built the conjugate vector here, i.e. read
+    # X_{-phi}; see the 0.13.0 changelog)
+    u = np.zeros(2 * n_modes, dtype=complex)
+    if mode_index_b is None:
+        u[mode_index] = np.exp(1j * phi) / np.sqrt(2.0)
+        u[n_modes + mode_index] = np.exp(-1j * phi) / np.sqrt(2.0)
+    else:
+        for idx, w in ((mode_index, 0.5), (int(mode_index_b), 0.5)):
+            u[idx] += np.exp(1j * phi) * w
+            u[n_modes + idx] += np.exp(-1j * phi) * w
+    return u
+
+
+def _variance_at(G, eta, n_modes, mode_index, phi, mode_index_b,
+                 n_th_port, n_th_loss):
+    """Output quadrature variance from the resolvent G (inputs already
+    checked): z_out = T_ex z_ex + T_0 z_0 with T_ex = 2 eta G - I and
+    T_0 = 2 sqrt(eta (1 - eta)) G, so the rows are
+    u^dag T_ex = 2 eta (u^dag G) - u^dag and u^dag T_0."""
+    m2 = G.shape[0]
+    u = _quadrature_u(n_modes, mode_index, phi, mode_index_b)
+    uc = u.conj()
+    y = uc @ G
+    rows = (2.0 * eta * y - uc, 2.0 * np.sqrt(eta * (1.0 - eta)) * y)
+    return _variance_from_rows(
+        rows, (_bath_diagonal(m2, n_th_port), _bath_diagonal(m2, n_th_loss)))
+
+
+def output_quadrature_variance(M, eta: float, omega: float,
+                               mode_index: int, n_modes: int,
+                               phi: float = 0.0, mode_index_b=None,
+                               n_th_port: float = 0.0,
+                               n_th_loss: float = 0.0,
+                               allow_marginal: bool = False) -> float:
     """Symmetrized variance of an output quadrature at frequency omega.
 
     mode_index : index of the mode (within the retained mode list) whose
@@ -150,12 +218,21 @@ def output_quadrature_variance(M, eta, omega, mode_index, n_modes,
     at -phi of another slot), and mode_index_b equal to mode_index
     (which used to return twice the single-mode variance). The best
     and worst angle need no scan: see `optimal_quadrature`.
+
+    Fixed in 0.16: the variance is summed from the rows u^dag T of the
+    transfer matrices, a sum of non-negative terms, instead of read off
+    the assembled output matrix. Close to threshold the old reading
+    subtracted numbers of the size of the antisqueezed variance and lost
+    the squeezed one: `single_mode_parametric(0.9999)` at eta = 1,
+    omega = 0, phi = pi/2 gave -2.1e-8 (a negative variance) instead of
+    1.25e-9. Elsewhere the two agree to rounding.
     """
     eta = _check_quadrature_inputs(M, eta, mode_index, n_modes,
                                    mode_index_b, n_th_port, n_th_loss,
                                    allow_marginal)
-    S = _output_covariance(M, eta, omega, n_th_port, n_th_loss)
-    return _read_quadrature(S, n_modes, mode_index, phi, mode_index_b)
+    G = _resolvent(np.asarray(M), omega)
+    return _variance_at(G, eta, n_modes, mode_index, phi, mode_index_b,
+                        n_th_port, n_th_loss)
 
 
 def _check_quadrature_inputs(M, eta, mode_index, n_modes, mode_index_b,
@@ -170,32 +247,6 @@ def _check_quadrature_inputs(M, eta, mode_index, n_modes, mode_index_b,
                          "joint quadrature needs two different modes")
     _check_spectra_stability(M, allow_marginal)
     return eta
-
-
-def _read_quadrature(S, n_modes, mode_index, phi, mode_index_b=None):
-    """u^dag S u for the quadrature X_phi of one mode, or of the joint
-    mode (a + b)/sqrt(2), from the output matrix S of
-    `_output_covariance` (indices already checked)."""
-    n_modes = int(n_modes)
-    mode_index = int(mode_index)
-    # u^dag z = (a e^{-i phi} + a^dag e^{i phi}) / sqrt(2) = X_phi
-    # = cos(phi) x + sin(phi) p, the documented quadrature (sqzcomb
-    # 0.12.1 and earlier built the conjugate vector here, i.e. read
-    # X_{-phi}; see the 0.13.0 changelog)
-    u = np.zeros(2 * n_modes, dtype=complex)
-    if mode_index_b is None:
-        u[mode_index] = np.exp(1j * phi) / np.sqrt(2.0)
-        u[n_modes + mode_index] = np.exp(-1j * phi) / np.sqrt(2.0)
-    else:
-        for idx, w in ((mode_index, 0.5), (int(mode_index_b), 0.5)):
-            u[idx] += np.exp(1j * phi) * w
-            u[n_modes + idx] += np.exp(-1j * phi) * w
-    # With N giving <a a^dagger> = 1 and zero elsewhere, u^dag S u is the
-    # output quadrature spectrum with vacuum level exactly 1/2; the
-    # passive-cavity identity (T_ex N T_ex^dag + T_0 N T_0^dag = N for any
-    # eta, Omega) is verified in the test-suite.
-    var = np.real(u.conj() @ S @ u)
-    return float(var)
 
 
 def squeezing_db(variance):
@@ -275,7 +326,7 @@ def output_entanglement_spectrum(M, eta, omegas, i, j, n_modes,
         for w in np.asarray(omegas, dtype=float)])
 
 
-def quadrature_extremes(variance_at, rtol=1e-8):
+def quadrature_extremes(variance_at, rtol: float = 1e-8) -> dict:
     """Exact smallest and largest variance over the quadrature angle.
 
     variance_at : callable phi -> variance of the quadrature X_phi
@@ -302,6 +353,17 @@ def quadrature_extremes(variance_at, rtol=1e-8):
     phase-insensitive state) every angle is equally good and the angles
     returned carry no meaning.
 
+    Accuracy (new in 0.16): the subtraction c0 - r loses the relative
+    accuracy of V_min when V_max / V_min is huge (close to threshold the
+    error is about 1e-16 V_max, which can exceed V_min and even make it
+    negative). For a scalar variance_at, V_min and V_max are therefore
+    the values of variance_at at phi_min and phi_max (two more
+    evaluations), which are as accurate as variance_at itself; the
+    angles come out accurate either way. An array-valued variance_at has
+    a different best angle in each element, so it keeps c0 -/+ r;
+    `optimal_quadrature` and `optimal_band_quadrature` evaluate each
+    frequency at its own angle instead.
+
     Returns dict(v_min, v_max, phi_min, phi_max, mean=c0), each a float
     or an array shaped like the values returned by variance_at.
     """
@@ -312,6 +374,21 @@ def quadrature_extremes(variance_at, rtol=1e-8):
                                           np.pi / 8))
     if not all(np.all(np.isfinite(v)) for v in (v0, v45, v90, v22)):
         raise ValueError("variance_at returned a non-finite value")
+    c0, r, phi_min, phi_max = _harmonics(v0, v45, v90, v22, rtol)
+    out = {"v_min": c0 - r, "v_max": c0 + r, "phi_min": phi_min,
+           "phi_max": phi_max, "mean": c0}
+    if np.ndim(v0) == 0:
+        out = {k: float(v) for k, v in out.items()}
+        v_lo, v_hi = ev(out["phi_min"]), ev(out["phi_max"])
+        if not (np.isfinite(v_lo) and np.isfinite(v_hi)):
+            raise ValueError("variance_at returned a non-finite value")
+        out["v_min"], out["v_max"] = float(v_lo), float(v_hi)
+    return out
+
+
+def _harmonics(v0, v45, v90, v22, rtol):
+    """c0, r and the extreme angles from V(0), V(pi/4), V(pi/2), with
+    the form check at V(pi/8) (see `quadrature_extremes`)."""
     c0 = 0.5 * (v0 + v90)
     c1 = 0.5 * (v0 - v90)
     c2 = v45 - c0
@@ -325,16 +402,13 @@ def quadrature_extremes(variance_at, rtol=1e-8):
             "variance itself (not dB), as a function of the angle")
     phi_max = np.mod(0.5 * np.arctan2(c2, c1), np.pi)
     phi_min = np.mod(phi_max + 0.5 * np.pi, np.pi)
-    out = {"v_min": c0 - r, "v_max": c0 + r, "phi_min": phi_min,
-           "phi_max": phi_max, "mean": c0}
-    if np.ndim(v0) == 0:
-        out = {k: float(v) for k, v in out.items()}
-    return out
+    return c0, r, phi_min, phi_max
 
 
-def optimal_quadrature(M, eta, omega, mode_index, n_modes,
-                       mode_index_b=None, n_th_port=0.0, n_th_loss=0.0,
-                       allow_marginal=False):
+def optimal_quadrature(M, eta: float, omega, mode_index: int,
+                       n_modes: int, mode_index_b=None,
+                       n_th_port: float = 0.0, n_th_loss: float = 0.0,
+                       allow_marginal: bool = False) -> dict:
     """The most squeezed and most antisqueezed output quadrature, exactly.
 
     Same arguments as `output_quadrature_variance`, except that omega
@@ -347,15 +421,19 @@ def optimal_quadrature(M, eta, omega, mode_index, n_modes,
     antisqueezing_db); arrays over omega when omega is an array.
 
     Since 0.15 the inputs are checked and the output matrix is built
-    once per frequency, instead of once per frequency and angle; the
-    numbers are identical to the earlier per-angle calls (tested for
-    exact equality).
+    once per frequency, instead of once per frequency and angle. Since
+    0.16, v_min and v_max are the variances at phi_min and phi_max,
+    each exactly what `output_quadrature_variance` returns there
+    (tested for exact equality), instead of c0 -/+ r, which lost the
+    squeezed variance near threshold (see the CHANGELOG). The angles
+    and the mean are unchanged.
     """
     w = np.asarray(omega, dtype=float)
     ws = np.atleast_1d(w)
-    var = _angle_function(M, eta, ws, mode_index, n_modes, mode_index_b,
-                          n_th_port, n_th_loss, allow_marginal)
-    out = quadrature_extremes(var)
+    var, var_k = _angle_function(M, eta, ws, mode_index, n_modes,
+                                 mode_index_b, n_th_port, n_th_loss,
+                                 allow_marginal)
+    out = _extremes_per_frequency(var, var_k, ws.size)
     if w.ndim == 0:
         out = {k: float(v[0]) for k, v in out.items()}
     out["squeezing_db"] = squeezing_db(out["v_min"])
@@ -363,20 +441,34 @@ def optimal_quadrature(M, eta, omega, mode_index, n_modes,
     return out
 
 
+def _extremes_per_frequency(var, var_k, n):
+    """`quadrature_extremes` over frequencies, with v_min and v_max
+    evaluated at each frequency's own angles."""
+    out = quadrature_extremes(var)
+    out["v_min"] = np.array([var_k(k, out["phi_min"][k]) for k in range(n)])
+    out["v_max"] = np.array([var_k(k, out["phi_max"][k]) for k in range(n)])
+    return out
+
+
 def _angle_function(M, eta, ws, mode_index, n_modes, mode_index_b,
                     n_th_port, n_th_loss, allow_marginal):
-    """phi -> array of output variances over the frequencies ws, each
-    exactly what `output_quadrature_variance` returns, with the checks
-    run and the output matrix S(omega) built once."""
+    """(var, var_k): var(phi) is the array of output variances over the
+    frequencies ws and var_k(k, phi) the one at ws[k], each exactly what
+    `output_quadrature_variance` returns, with the checks run and the
+    resolvent built once per frequency."""
     eta = _check_quadrature_inputs(M, eta, mode_index, n_modes,
                                    mode_index_b, n_th_port, n_th_loss,
                                    allow_marginal)
-    Ss = [_output_covariance(M, eta, x, n_th_port, n_th_loss) for x in ws]
+    Ms = np.asarray(M)
+    Gs = [_resolvent(Ms, x) for x in ws]
+
+    def var_k(k, p):
+        return _variance_at(Gs[k], eta, n_modes, mode_index, float(p),
+                            mode_index_b, n_th_port, n_th_loss)
 
     def var(p):
-        return np.array([_read_quadrature(S, n_modes, mode_index, p,
-                                          mode_index_b) for S in Ss])
-    return var
+        return np.array([var_k(k, p) for k in range(len(Gs))])
+    return var, var_k
 
 
 def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
@@ -439,8 +531,9 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
                 or not np.sum(wt) > 0.0:
             raise ValueError("weights must be finite, >= 0 and not all "
                              "zero")
-    var = _angle_function(M, eta, ws, mode_index, n_modes, mode_index_b,
-                          n_th_port, n_th_loss, allow_marginal)
+    var, var_k = _angle_function(M, eta, ws, mode_index, n_modes,
+                                 mode_index_b, n_th_port, n_th_loss,
+                                 allow_marginal)
     cache = {}
 
     def cached(p):
@@ -448,11 +541,13 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
             cache[p] = var(p)
         return cache[p]
 
-    per = quadrature_extremes(cached)
+    per = _extremes_per_frequency(cached, var_k, ws.size)
+    # scalar: quadrature_extremes evaluates the band average at its
+    # best angle (since 0.16), so v_band is the average of v below
     band = quadrature_extremes(
         lambda p: float(np.dot(wt, cached(p)) / np.sum(wt)))
     phi = band["phi_min"]
-    v = var(phi)
+    v = cached(phi)
     return {"phi": phi, "v_band": band["v_min"],
             "squeezing_db_band": float(squeezing_db(band["v_min"])),
             "v": v, "squeezing_db": squeezing_db(v),

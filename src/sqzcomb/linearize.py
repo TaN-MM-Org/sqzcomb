@@ -20,8 +20,8 @@ import numpy as np
 from .lle import _linear_symbol
 
 
-def fluctuation_matrix(psi_s, alpha, dispersion=(0.0,), modes=None,
-                       d1=0.0):
+def fluctuation_matrix(psi_s, alpha: float, dispersion=(0.0,), modes=None,
+                       d1: float = 0.0) -> tuple:
     """Doubled-basis drift matrix M around steady state psi_s.
 
     modes : iterable of integer mode numbers to keep (default: all grid
@@ -39,20 +39,31 @@ def fluctuation_matrix(psi_s, alpha, dispersion=(0.0,), modes=None,
 
     f_abs2 = np.fft.fft(np.abs(psi_s) ** 2) / n     # components of |psi_s|^2
     f_sq = np.fft.fft(psi_s ** 2) / n               # components of psi_s^2
-    comp_abs2 = dict(zip(kgrid, f_abs2))
-    comp_sq = dict(zip(kgrid, f_sq))
 
     L = _linear_symbol(alpha, dispersion, modes.astype(float), d1)
+    # A_ij = L_i delta_ij + 2i (|psi|^2)^(k_i - k_j), B_ij = i (psi^2)^(k_i
+    # + k_j), with a component that falls outside the grid's mode range
+    # taken as zero (no wrap-around). Built with index arrays since
+    # 0.16; the arithmetic is the same as the earlier double loop, entry
+    # by entry, so the matrix is bit-identical (tested).
     A = np.zeros((m, m), dtype=complex)
+    A[np.arange(m), np.arange(m)] = L
+    A += 2j * _grid_components(f_abs2, kgrid, modes[:, None] - modes[None, :])
     B = np.zeros((m, m), dtype=complex)
-    for i, ki in enumerate(modes):
-        for j, kj in enumerate(modes):
-            if i == j:
-                A[i, j] += L[i]
-            A[i, j] += 2j * comp_abs2.get(ki - kj, 0.0)
-            B[i, j] += 1j * comp_sq.get(ki + kj, 0.0)
+    B += 1j * _grid_components(f_sq, kgrid, modes[:, None] + modes[None, :])
     M = np.block([[A, B], [np.conj(B), np.conj(A)]])
     return M, modes
+
+
+def _grid_components(f, kgrid, k):
+    """The Fourier component f of each mode number in the integer array
+    k (FFT layout: mode v sits at slot v mod n), and zero for a mode
+    number outside the grid's range [min(kgrid), max(kgrid)]."""
+    n = f.size
+    inside = (k >= kgrid.min()) & (k <= kgrid.max())
+    out = np.zeros(k.shape, dtype=complex)
+    out[inside] = f[np.mod(k[inside], n)]
+    return out
 
 
 def single_mode_parametric(mu, delta=0.0):

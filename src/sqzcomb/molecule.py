@@ -67,8 +67,8 @@ import math
 import numpy as np
 
 from .linearize import fluctuation_matrix
-from .spectra import (_bath_covariance, _check_spectra_stability,
-                      _port_indices)
+from .spectra import (_bath_diagonal, _check_spectra_stability,
+                      _port_indices, _variance_from_rows)
 
 
 def photonic_molecule(mu, J, delta_a=0.0, delta_b=0.0, gamma=1.0):
@@ -87,9 +87,10 @@ def photonic_molecule(mu, J, delta_a=0.0, delta_b=0.0, gamma=1.0):
     return M, np.array([1.0, float(gamma)])
 
 
-def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
-                          mode_index=None, n_th_port=0.0, n_th_loss=0.0,
-                          allow_marginal=False):
+def output_variance_ports(M, gammas, eta: float, port_mode, omega: float,
+                          phi: float = 0.0, mode_index=None,
+                          n_th_port: float = 0.0, n_th_loss: float = 0.0,
+                          allow_marginal: bool = False) -> float:
     """Detected quadrature variance with per-mode decay rates.
 
     The monitored bus couples to `port_mode` (an int, or a sequence of
@@ -125,6 +126,9 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     with the default mode_index, used to be counted twice and returned
     twice the variance); a repeated port alone is harmless and is
     de-duplicated.
+    Fixed in 0.16: close to threshold the variance lost its accuracy
+    and could come out negative, as in `output_quadrature_variance`;
+    it is now summed from the rows of the transfer matrices.
     """
     gammas = np.asarray(gammas, dtype=float)
     n = gammas.size
@@ -142,27 +146,15 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
     ident = np.eye(m2, dtype=complex)
     G = np.linalg.inv(-1j * omega * ident - M)
 
-    def doubled_diag(amps):
-        return np.diag(np.concatenate([amps, amps]).astype(complex))
-
     # monitored bus: amplitude sqrt(2 eta gamma_j) on each port mode
     amp_port = np.zeros(n)
     amp_port[ports] = np.sqrt(2.0 * eta * gammas[ports])
-    C_port = doubled_diag(amp_port)
+    c_port = np.concatenate([amp_port, amp_port])
 
     # loss baths: remainder of the monitored modes, full decay of the rest
     amp_loss = np.sqrt(2.0 * gammas)
     amp_loss[ports] = np.sqrt(2.0 * (1.0 - eta) * gammas[ports])
-    C_loss = doubled_diag(amp_loss)
-
-    T_port = C_port @ G @ C_port - ident
-    T_loss = C_port @ G @ C_loss
-
-    # <z_in z_in^dagger> of the bus input and of the loss baths
-    N_port = _bath_covariance(m2, n_th_port)
-    N_loss = _bath_covariance(m2, n_th_loss)
-    S = T_port @ N_port @ T_port.conj().T \
-        + T_loss @ N_loss @ T_loss.conj().T
+    c_loss = np.concatenate([amp_loss, amp_loss])
 
     u = np.zeros(m2, dtype=complex)
     w = 1.0 / np.sqrt(2.0 * reads.size)
@@ -170,7 +162,19 @@ def output_variance_ports(M, gammas, eta, port_mode, omega, phi=0.0,
         # u^dag z = X_phi = cos(phi) x + sin(phi) p (see spectra.py)
         u[idx] += np.exp(1j * phi) * w
         u[n + idx] += np.exp(-1j * phi) * w
-    return float(np.real(u.conj() @ S @ u))
+    # With C_port, C_loss the diagonal coupling matrices, the transfer
+    # matrices are T_port = C_port G C_port - I and T_loss = C_port G
+    # C_loss, and the variance is u^dag (T_port N_port T_port^dag +
+    # T_loss N_loss T_loss^dag) u with the diagonal <z_in z_in^dagger>
+    # of the bus input and of the loss baths. It is summed from the rows
+    # u^dag T, with the identity subtracted after the projection (fixed
+    # in 0.16: reading it off the assembled matrix lost the squeezed
+    # variance near threshold).
+    uc = u.conj()
+    y = (uc * c_port) @ G
+    rows = (y * c_port - uc, y * c_loss)
+    return _variance_from_rows(rows, (_bath_diagonal(m2, n_th_port),
+                                      _bath_diagonal(m2, n_th_loss)))
 
 
 def molecule_fluctuation_matrix(psi_s, alpha, J, gamma_b, dispersion=(0.0,),

@@ -65,14 +65,29 @@ def ppt_symplectic_eigenvalue(sigma4, hbar: float = 2.0) -> float:
                          "possible")
     A, B, C = s[:2, :2], s[2:, 2:], s[:2, 2:]
     delta_t = np.linalg.det(A) + np.linalg.det(B) - 2.0 * np.linalg.det(C)
-    disc = delta_t ** 2 - 4.0 * np.linalg.det(s)
+    det_s = np.linalg.det(s)
+    disc = delta_t ** 2 - 4.0 * det_s
     if disc < -1e-9 * max(1.0, delta_t ** 2):
         raise ValueError("invalid covariance matrix (negative discriminant)")
-    nu2 = 0.5 * (delta_t - np.sqrt(max(disc, 0.0)))
-    if nu2 < 0.0:
-        if nu2 < -1e-9:
-            raise ValueError("invalid covariance matrix (nu^2 < 0)")
-        nu2 = 0.0
+    if not det_s > 0.0:
+        # a physical covariance has det >= (hbar/2)^4 > 0; zero or less
+        # means an invalid matrix, or one so ill-conditioned that double
+        # precision cannot resolve its smallest eigenvalue (before 0.16
+        # this came out as nu = 0, i.e. E_N = inf)
+        raise ValueError(
+            "the covariance matrix is singular to double precision "
+            f"(det = {det_s:.3g}); it is not a valid covariance, or its "
+            "condition number is too large for the smaller symplectic "
+            "eigenvalue to be computed")
+    # nu_-^2 nu_+^2 = det and nu_-^2 + nu_+^2 = delta_t. The textbook
+    # form nu_-^2 = (delta_t - sqrt(disc)) / 2 subtracts two nearly equal
+    # numbers when the pair is strongly entangled (a two-mode squeezed
+    # vacuum with r = 5 gave E_N = inf instead of 10); dividing det by
+    # the larger root, which has no cancellation, is the same number
+    # (fixed in 0.16).
+    nu2 = 2.0 * det_s / (delta_t + np.sqrt(max(disc, 0.0)))
+    if not (np.isfinite(nu2) and nu2 > 0.0):
+        raise ValueError("invalid covariance matrix (nu^2 <= 0)")
     return float(0.5 * hbar * np.sqrt(nu2))
 
 
