@@ -36,7 +36,10 @@ It answers questions such as:
   parameters at all? And how close to threshold must the ring be
   pumped for a target squeezing, given the losses and the jitter?
 - What are the ring's linewidth and escape efficiency, from a laser
-  sweep across one resonance?
+  sweep across one resonance, also when backscattering splits it into
+  a doublet?
+- Is the squeezing limited by loss or by phase jitter? (Found from
+  squeezed and antisqueezed levels measured at several pump powers.)
 - What happens above threshold, or when single photons matter and the
   light is no longer Gaussian?
 - How much does classical noise (a wandering resonance, a noisy pump
@@ -54,7 +57,7 @@ why](#when-it-refuses-and-why)).
 - [Install and requirements](#install-and-requirements)
 - [Units and conventions](#units-and-conventions)
 - [Examples](#examples) (each with the output it prints)
-- [Tutorials](#tutorials) (two end-to-end scripts in `examples/`)
+- [Tutorials](#tutorials) (three end-to-end scripts in `examples/`)
 - [What is in the package](#what-is-in-the-package)
 - [When it refuses, and why](#when-it-refuses-and-why)
 - [How the results are checked](#how-the-results-are-checked)
@@ -198,8 +201,9 @@ newer. QuTiP (4.7 or newer) is needed only for `drift_from_qutip`.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with sqzcomb 0.16.0. Examples 1 to 21 print the same as with
-0.15.1, except one line of example 5, which 0.16.0 corrects (see
+printed with sqzcomb 0.17.0. Examples 1 to 23 print the same as with
+0.16.0; examples 1 to 21 print the same as with 0.15.1, except one
+line of example 5, which 0.16.0 corrected (see
 [Corrections](#corrections)). The device and pump numbers are
 illustrative values chosen for the example, not measured data, except
 the measured pair in example 6, which is quoted from the paper named
@@ -1169,7 +1173,8 @@ them apart, so the fit returns both and gives `eta_esc` only for the
 branch you name. The phase of the transmitted light, or a change of
 the coupling gap, decides it. With `sigma` the fit also checks that
 one Lorentzian describes the data; a resonance split into a doublet,
-or one bent by heating at too high a power, is refused. It also
+or one bent by heating at too high a power, is refused (a doublet can
+be fitted with `fit_split_resonance`, example 25). It also
 refuses a scan that does not reach one linewidth beyond the resonance
 on both sides, or has fewer than 5 points inside the linewidth.
 
@@ -1209,12 +1214,125 @@ gain reaches. It uses the single-mode model without detuning, which
 fails close to threshold (examples 11 and 12), so a plan that needs
 `mu` very close to 1 is optimistic.
 
+### 24. Loss or phase jitter? Pairs at several pump levels
+
+```python
+import numpy as np
+from sqzcomb import (detected_squeezing_db, fit_squeezing_pairs, infer_source,
+                     phase_noise_variance)
+
+# Synthetic pairs at five pump levels (illustrative: total efficiency
+# 0.8, 30 mrad RMS jitter), source levels from -3 to -15 dB, with
+# 0.03 dB of noise on each value.
+rng = np.random.default_rng(1)
+src = np.array([3.0, 6.0, 9.0, 12.0, 15.0])           # dB
+vs, va = 0.5 * 10 ** (-src / 10), 0.5 * 10 ** (src / 10)
+sq = detected_squeezing_db(phase_noise_variance(vs, va, 0.03), 0.8)
+an = detected_squeezing_db(phase_noise_variance(va, vs, 0.03), 0.8)
+sq, an = sq + rng.normal(0, 0.03, 5), an + rng.normal(0, 0.03, 5)
+
+r = fit_squeezing_pairs(sq, an, sigma_db=0.03)
+print(f"eta = {r['eta']:.3f} +/- {r['eta_sigma']:.3f}")
+print(f"jitter = {1e3 * r['theta_rms']:.1f} +/- "
+      f"{1e3 * r['theta_rms_sigma']:.1f} mrad, "
+      f"chi^2 = {r['chi2']:.1f} / {r['chi2_dof']}")
+print("sources (dB):", np.round(r["sq_db_source"], 2))
+# Each pair alone, assuming no jitter, reads the jitter as extra loss.
+print("eta per pair:", [round(infer_source(s, a)["eta"], 3)
+                        for s, a in zip(sq, an)])
+```
+
+```
+eta = 0.801 +/- 0.003
+jitter = 31.2 +/- 2.4 mrad, chi^2 = 2.8 / 3
+sources (dB): [ -3.    -5.97  -9.01 -12.01 -15.  ]
+eta per pair: [0.786, 0.793, 0.791, 0.79, 0.774]
+```
+
+One measured squeezed / antisqueezed pair has two numbers, too few for
+three unknowns: the efficiency, the jitter and the source
+(`infer_source` assumes the jitter is known, by default zero). Pairs
+measured at several pump powers with the same detection chain solve
+that. Loss pulls every pair toward shot noise by the same fraction,
+while jitter mixes in a part of the antisqueezed variance, which grows
+with the pump. `fit_squeezing_pairs` fits one efficiency and one
+jitter to all pairs, with one free source level per pair (so no law
+between pump power and gain is assumed), and checks the model with
+chi-square. Experiments analyze their data in this way; for example,
+B. Shajilal et al., arXiv:2211.06632 (2022), model their squeezing and
+antisqueezing against pump power with a total efficiency and a jitter
+angle. The jitter is reported as the RMS of a Gaussian jitter and as
+the fraction `mix` of the other quadrature it mixes in; with no
+resolved jitter the fit gives an upper limit instead of an error bar.
+Pairs all taken at about the same pump level cannot separate the two
+effects, and the fit refuses them. The last line shows what a single
+pair gives: read alone, with no jitter assumed, every pair reports an
+efficiency below the true 0.8, because the jitter is counted as loss,
+and the highest pump level reports the lowest.
+
+### 25. A resonance split by backscattering
+
+```python
+import numpy as np
+from sqzcomb import (fit_resonance_transmission, fit_split_resonance,
+                     split_transmission)
+
+# A synthetic sweep across a resonance split by backscattering
+# (illustrative ring: kappa = 100 MHz, eta_esc = 0.8, splitting
+# 60 MHz), 0.5 % noise on each point.
+f = np.linspace(-400e6, 400e6, 201)
+rng = np.random.default_rng(3)
+T = split_transmission(f, 0.0, 100e6, 0.8, 60e6)
+T = T + rng.normal(0, 0.005, f.size)
+try:
+    fit_resonance_transmission(f, T, sigma=0.005)
+except ValueError as err:
+    print("one dip:", str(err).split(" (")[0])
+
+r = fit_split_resonance(f, T, sigma=0.005)
+for branch in ("under", "over"):
+    d = r[branch]
+    if d is None:
+        print(f"{branch}-coupled: does not fit these data")
+        continue
+    s = d["sigma"]
+    print(f"{branch}-coupled: kappa = {d['kappa_hz'] / 1e6:.2f} +/- "
+          f"{s['kappa_hz'] / 1e6:.2f} MHz, p = {d['p_value']:.2f}")
+    print(f"  eta_esc = {d['eta_esc']:.4f} +/- {s['eta_esc']:.4f}, "
+          f"splitting = {d['splitting_hz'] / 1e6:.2f} +/- "
+          f"{s['splitting_hz'] / 1e6:.2f} MHz")
+```
+
+```
+one dip: a single Lorentzian dip does not describe these data
+under-coupled: does not fit these data
+over-coupled: kappa = 100.12 +/- 0.36 MHz, p = 0.19
+  eta_esc = 0.7992 +/- 0.0056, splitting = 59.90 +/- 0.61 MHz
+```
+
+Scattering from imperfections of the ring (sidewall roughness, for
+example) couples its clockwise and counterclockwise modes, and a
+high-Q resonance can then show two dips (T. J. Kippenberg, S. M. Spillane and K. J. Vahala, Opt. Lett. 27,
+1669 (2002)). `fit_resonance_transmission` refuses such a scan;
+`fit_split_resonance` fits the doublet: the loaded linewidth of each
+of the two standing-wave modes, the escape efficiency of the ring
+into the bus, the splitting and the center. Unlike a single dip, a
+resolved doublet looks different for an under- and an over-coupled
+ring with the same linewidth, so the fit is done for both regimes and
+a regime that does not fit is reported as such (here the
+under-coupled one). For a small splitting both fit, and the
+chi-square difference `delta_chi2` says how strongly the data prefer
+one of them. The model assumes two modes of equal linewidth and a
+coupling that loses no light; the derivation is in the
+`sqzcomb.resonance` docstring and is checked against the package's
+two-mode drift matrix.
+
 ## Tutorials
 
-Two scripts in `examples/` go from synthetic "measured" data (made
+Three scripts in `examples/` go from synthetic "measured" data (made
 with a fixed seed from stated true values, so they print the same
 numbers everywhere) to final results with uncertainties. Each runs in
-a few seconds, and `tests/test_tutorials.py` runs both and checks
+a few seconds, and `tests/test_tutorials.py` runs all three and checks
 their output.
 
 **`examples/tutorial_ring_calibration.py`**: a new ring, from two
@@ -1252,6 +1370,33 @@ fit: mu    = 0.598 +/- 0.002
      kappa = 20.07 +/- 0.07 MHz
      chi^2 / dof = 57.6 / 57
 pair at 1 MHz: eta = 0.750 +/- 0.006, source -11.81 +/- 0.10 dB
+```
+
+**`examples/tutorial_loss_and_jitter.py`** (new in 0.17): loss or
+phase jitter? Raw analyzer traces at one analysis frequency (5 MHz)
+for six pump levels become squeezed and antisqueezed levels with
+error bars (`shot_noise_normalize`), `fit_squeezing_pairs` gives the
+total efficiency and the RMS jitter that all six share (example 24),
+`infer_source` on each pair alone shows the jitter read as loss, and
+`gain_for_squeezing` turns the fitted numbers into the gain for -6 dB
+and the deepest reachable squeezing, with error bars that carry the
+strong correlation of the efficiency and the jitter. True values:
+total efficiency 0.81 (escape 0.9 x detection 0.9), 25 mrad, linewidth
+50 MHz, gains 0.3 to 0.9.
+
+```
+mu     squeezed dB       antisqueezed dB   eta (pair alone)
+0.30   -3.56 +/- 0.04    +4.53 +/- 0.04    0.804
+0.45   -4.93 +/- 0.04    +7.12 +/- 0.04    0.811
+0.60   -5.94 +/- 0.05    +10.25 +/- 0.04   0.808
+0.70   -6.24 +/- 0.04    +12.68 +/- 0.04   0.797
+0.80   -6.31 +/- 0.04    +15.23 +/- 0.04   0.785
+0.90   -6.25 +/- 0.05    +17.72 +/- 0.04   0.773
+joint fit: eta   = 0.812 +/- 0.002
+           theta = 26.2 +/- 1.3 mrad
+           chi^2 / dof = 6.4 / 4
+-6 dB at 5 MHz: mu = 0.625 +/- 0.006
+deepest reachable: -6.37 +/- 0.02 dB at mu = 0.788
 ```
 
 ## What is in the package
@@ -1405,6 +1550,13 @@ pair at 1 MHz: eta = 0.750 +/- 0.006, source -11.81 +/- 0.10 dB
 - `gain_for_squeezing` (new in 0.16): the smallest parametric gain
   that gives a target detected squeezing after loss, jitter and dark
   noise, and the best gain when jitter limits it (example 23).
+- `fit_squeezing_pairs` (new in 0.17): the total efficiency and the
+  phase jitter from squeezed / antisqueezed pairs measured at several
+  pump levels, with error bars and a chi-square check (example 24).
+- `fit_split_resonance`, `split_transmission` (new in 0.17): the
+  linewidth, escape efficiency and splitting of a resonance split into
+  a doublet by backscattering, fitted for both coupling regimes
+  (example 25).
 
 Each function's docstring (`help(sqzcomb.output_quadrature_variance)`,
 for example) gives its inputs, units and conventions.
@@ -1516,11 +1668,22 @@ for example) gives its inputs, units and conventions.
   not describe (chi-square p-value below `min_p_value`, default
   1e-6); `gain_for_squeezing` gets a target that is not negative or
   that no gain below threshold reaches (the message gives the best
-  reachable value).
+  reachable value);
+- (new in 0.17) `fit_squeezing_pairs` gets fewer than 2 pairs (1 with
+  `fit_jitter=False`), inputs of different lengths or not finite, a
+  squeezed level at or above shot noise or an antisqueezed one at or
+  below it, a non-positive error, or pairs that do not separate the
+  efficiency from the jitter (for example all at about the same pump
+  level); `fit_split_resonance` gets no `sigma`, fewer than 12 points,
+  a splitting that is not resolved (use `fit_resonance_transmission`
+  then), a scan that does not reach one linewidth beyond both dips, or
+  data the doublet does not describe; `through_transmission` and
+  `split_transmission` get a center frequency or baseline that is not
+  finite.
 
 ## How the results are checked
 
-235 automated tests run on every push and pull request, on Python 3.9,
+260 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest versions the package allows (NumPy 1.22.0, SciPy 1.10.0, QuTiP
 4.7.0). The five QuTiP tests are skipped when QuTiP is not installed,
@@ -1631,6 +1794,50 @@ with the tolerances the tests use:
   three of their printed error bars.
 - The three fixes under [Corrections](#corrections) each have a test
   that fails on 0.15.1.
+
+**New in 0.17**
+
+- `fit_squeezing_pairs`: pairs made through the package's own forward
+  path (the output of `single_mode_parametric` from
+  `output_quadrature_variance` at escape efficiency `eta_esc`, then
+  `phase_noise_variance` and `detected_variance` at the detection
+  efficiency) give back `eta_esc` times the detection efficiency to
+  1e-8 and the jitter to a relative 1e-6, at three analysis
+  frequencies including 0, with and without dark noise in both
+  conventions; each fitted source equals the lossless output at the
+  same gain and frequency (1e-6 dB). One pair without jitter
+  reproduces `infer_source` (relative 1e-10). Over 150 seeded noisy
+  sets of six pairs the scatter of the efficiency and of the mixing
+  fraction is between 0.75 and 1.3 times the reported error bars, and
+  chi-square averages to its degrees of freedom within 25 %.
+- `split_transmission` equals the forward transmission built from the
+  drift matrix of `photonic_molecule` (two passive modes coupled by
+  `J`, the bus on one of them; relative 1e-13 at 140 combinations of
+  efficiency, coupling and detuning), equals `through_transmission`
+  without splitting, and is symmetric under `eta -> 1 - eta` only
+  without splitting. Noise-free doublets give back the linewidth,
+  efficiency and splitting to 1e-8 on the right branch, and the other
+  branch fails the chi-square test (also with a tilted baseline, whose
+  slope comes back to a relative 1e-7); over 40 seeded noisy scans the
+  scatter of the efficiency, linewidth and splitting is between 0.7 and
+  1.35 times the reported error bars (40 draws scatter by about 11 %).
+- The error bars of `kappa_ex` and `kappa_0` (fixed, see
+  [Corrections](#corrections)) equal first-order propagation written
+  out in the test from the reported covariance (relative 1e-6) and the
+  scatter of 200 seeded noisy scans (0.8 to 1.25 times), on both
+  branches.
+- `molecule_spectra_model`, now faster, agrees with the per-call
+  `output_variance_ports` path kept in the test to a relative 1e-13,
+  for both ports, with and without detuning.
+- The new tutorial prints exactly the output quoted in its docstring
+  and in this README, and recovers the true efficiency and jitter
+  within three of its printed error bars.
+- Two tolerances were set from the floating-point error they have to
+  allow instead of a fixed number: the comparison of a variance at the
+  best angle with `c0 - r` (an error of a few `eps * v_max`, which the
+  old fixed relative bound of 1e-13 did not follow; measured up to
+  1.1e-14 on one machine), and `dark_from_clearance_db(10.0)`, which
+  is exactly 0.05 only with a correctly rounded `pow`.
 
 **Photonic molecules**
 
@@ -1817,7 +2024,23 @@ with the tolerances the tests use:
 
 ## Corrections
 
-**0.16.0 (this release)** fixes three wrong answers. Each fix has a
+**0.17.0 (this release)** fixes one wrong answer. Its test
+(`tests/test_audit_017.py`) fails on 0.16.0:
+
+- `fit_resonance_transmission` with `branch` gave wrong error bars for
+  `kappa_ex` and `kappa_0`. The derivative of the escape efficiency
+  with respect to the dip depth had the wrong sign on both branches,
+  which flipped the term that carries the (strong) correlation of the
+  linewidth and the depth. For an over-coupled ring (`kappa = 100 MHz`,
+  `eta = 0.8`, 121 points, 1 % noise) `kappa_0` came out with
+  0.325 MHz instead of 0.171 MHz (Monte Carlo scatter 0.166 MHz) and
+  `kappa_ex` with 0.768 MHz instead of 0.946 MHz (scatter 0.900 MHz);
+  for an under-coupled one (`eta = 0.3`) `kappa_ex` came out with
+  0.427 MHz instead of 0.197 MHz (scatter 0.189 MHz). The values
+  themselves, the linewidth, the efficiency and its error bar were
+  right.
+
+**0.16.0** fixed three wrong answers. Each fix has a
 test (`tests/test_audit_016.py`) that fails on 0.15.1:
 
 - `symplectic_eigenvalues` returned the smallest eigenvalue twice and
@@ -1940,7 +2163,26 @@ for the real tolerances). The full history is in
 
 ## Limits
 
-What 0.16.0 adds to the picture:
+What 0.17.0 adds to the picture:
+
+- **Loss and jitter from pairs.** `fit_squeezing_pairs` assumes a pure
+  source behind one efficiency and one Gaussian jitter that are the
+  same for every pair, and a dark noise you state. That is exact for
+  the package's single-mode squeezer without detuning, at any analysis
+  frequency; a detuned squeezer, an impure source (excess noise that
+  grows with the pump) or a jitter that changes with the pump level
+  would be read as loss or jitter. The chi-square tells you when the
+  model does not fit. Two pairs are the minimum; pairs that span a
+  wide range of antisqueezing separate the two effects best.
+- **Split resonances.** `fit_split_resonance` assumes two
+  standing-wave modes of equal linewidth coupled without loss, and
+  transmission only (no reflection data). A splitting much smaller
+  than the linewidth is not resolved and is refused. The squeezing
+  models of the package describe a single, unsplit mode; with a large
+  splitting the pumped mode itself is changed, which the package does
+  not model.
+
+What 0.16.0 added:
 
 - **Precision near threshold.** The output variances now keep their
   accuracy close to threshold, but a covariance matrix cannot: its

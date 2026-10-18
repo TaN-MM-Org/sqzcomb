@@ -1,5 +1,129 @@
 # Changelog
 
+## 0.17.0 (2026-10-18)
+
+Loss and phase jitter told apart from squeezing pairs at several pump
+levels, resonances split by backscattering, a wrong error bar of the
+transmission fit fixed, a faster photonic-molecule model, two test
+tolerances tied to their floating-point limits, and a third tutorial.
+
+### Fixed
+
+- `fit_resonance_transmission(..., branch=...)` gave wrong error bars
+  for `kappa_ex_hz` and `kappa_0_hz`. The derivative of the escape
+  efficiency with respect to the dip depth D, which is
+  `-1 / (4 sqrt(1 - D))` on the over-coupled branch and
+  `+1 / (4 sqrt(1 - D))` on the under-coupled one, had the opposite
+  sign on both, which flipped the term that carries the (strong,
+  negative) correlation of the linewidth and the depth. Over-coupled
+  ring (`kappa = 100 MHz`, `eta = 0.8`, 121 points over +/- 300 MHz,
+  1 % noise): `kappa_0_hz_sigma` 0.325 MHz -> 0.171 MHz (Monte Carlo
+  scatter of 400 scans: 0.166 MHz), `kappa_ex_hz_sigma` 0.768 MHz ->
+  0.946 MHz (scatter 0.900 MHz). Under-coupled ring (`eta = 0.3`):
+  `kappa_ex_hz_sigma` 0.427 MHz -> 0.197 MHz (scatter 0.189 MHz),
+  `kappa_0_hz_sigma` 0.452 MHz -> 0.735 MHz (scatter 0.695 MHz). The
+  fitted values, `kappa_hz`, `eta_esc` and `eta_sigma` were right and
+  are unchanged. Test: `test_kappa_ex_and_kappa_0_error_bars`.
+
+### Added
+
+- `fit_squeezing_pairs(sq_db, anti_db, sigma_db, sigma_anti_db=None,
+  fit_jitter=True, dark_noise=0, dark_in_reference=False)`: the total
+  efficiency and the local-oscillator phase jitter shared by squeezed /
+  antisqueezed pairs measured at several pump levels, with error bars,
+  each pair's source level, and a chi-square check. One pair cannot
+  separate loss from jitter (`infer_source` needs the jitter given);
+  several pairs can, because loss pulls every pair toward shot noise by
+  the same fraction while jitter mixes in a part of the antisqueezing,
+  which grows with the pump. Model: a pure source per pair (no law
+  between pump power and gain assumed), the jitter law of
+  `phase_noise_variance`, then the efficiency and a stated dark noise
+  as in `detected_variance`. Checked against the package's own forward
+  path (the output of `single_mode_parametric` behind an escape
+  efficiency, at three analysis frequencies, is exactly such a source:
+  efficiency to 1e-8, jitter to a relative 1e-6), against
+  `infer_source` for one pair without jitter (relative 1e-10), and by
+  150 seeded noisy sets (scatter 0.75 to 1.3 times the error bars). The
+  analysis follows how experiments describe loss and jitter, for
+  example B. Shajilal et al., arXiv:2211.06632 (2022), who model their
+  squeezing and antisqueezing against pump power with a total
+  efficiency and a jitter angle. README example 24.
+- `split_transmission(...)` and `fit_split_resonance(f_hz,
+  transmission, sigma, fit_slope=False)`: a through-port dip split into
+  a doublet by backscattering, the coupled-mode model of the clockwise
+  and counterclockwise modes of T. J. Kippenberg, S. M. Spillane and
+  K. J. Vahala, Opt. Lett. 27, 1669 (2002). Returns the linewidth of
+  each standing-wave mode, the escape efficiency, the splitting and
+  the center with error bars, for the under- and the over-coupled
+  regime (a resolved doublet is not symmetric under
+  `eta -> 1 - eta`, so a regime that does not fit is reported as such),
+  and their chi-square difference. The transmission is derived in the
+  `sqzcomb.resonance` docstring and checked against the drift matrix
+  of `photonic_molecule` (relative 1e-13 at 140 points), noise-free
+  recovery (1e-8) and 40 seeded noisy scans. `fit_resonance_transmission`
+  now names it when it refuses a doublet. README example 25.
+- New test files `tests/test_squeezing_pairs.py` (9 tests),
+  `tests/test_split_resonance.py` (9) and `tests/test_audit_017.py`
+  (6), and one more test in `tests/test_tutorials.py`.
+
+### Changed
+
+- `through_transmission` (and the new `split_transmission`) refuse a
+  center frequency or baseline that is not finite (it returned an
+  all-NaN curve).
+- `output_variance_ports` is split into its input checks, the
+  resolvent and the evaluation (private helpers); its operations and
+  results are unchanged. `molecule_spectra_model` uses the helpers (see
+  Performance) and has type hints.
+- Tests: two tolerances now follow the floating-point error they have
+  to allow. The comparison of the variance at the best angle with
+  `c0 - r` in `test_optimal_quadrature_is_bit_identical_to_the_per_angle_path`
+  used a fixed relative 1e-13, but the error of `c0 - r` is a few
+  `eps * v_max`, which relative to `v_min` grows with `v_max / v_min`
+  (about 40 there; measured differences up to 1.1e-14 on one machine,
+  2.2e-15 on another); the bound is now `64 eps v_max`.
+  `dark_from_clearance_db(10.0) == 0.05` held only with a correctly
+  rounded `pow`; it is now compared to two units of rounding. An audit
+  of every `approx`, `isclose` and `allclose` in the suite, run on this
+  machine with and without its AVX-512 code paths (NumPy and OpenBLAS)
+  and with the oldest dependencies, found no other comparison using
+  more than a third of its tolerance on rounding error.
+- Packaging: a new `MANIFEST.in` puts `examples/` into the source
+  distribution, so that the tutorial tests run from an unpacked sdist
+  instead of being skipped (checked with `python -m build` and by
+  running `tests/test_tutorials.py` from the unpacked archive).
+- README: examples 24 and 25, the third tutorial, the new refusals,
+  checks, correction and limits; 260 tests (235 in 0.16.0).
+
+### Performance
+
+Measured on the same machine (2 shared CPUs), old and new code run in
+turn, three times; the range over the three runs is given:
+
+- `molecule_spectra_model` (30 frequencies, both traces): 5.0 to 5.3
+  times faster (99-108 ms -> 20 ms per call, median of 9 calls). The
+  input checks and the stability test now run once per call and the
+  resolvent is built once per frequency for both angles, instead of
+  once per frequency and angle. Each value comes from the same
+  operations as `output_variance_ports`; tested against the old
+  per-call path, kept in the test, to a relative 1e-13
+  (`test_molecule_model_matches_the_per_call_path`).
+- As a result a five-parameter molecule fit with `fit_spectra_model`
+  (the model of `test_molecule_model_round_trip`, 25 frequencies) is
+  3.9 to 5.5 times faster (20-27 s -> 4.5-5.6 s, one fit per run),
+  with the same fitted parameters.
+
+### Tutorials
+
+- `examples/tutorial_loss_and_jitter.py`: raw analyzer traces at six
+  pump levels -> squeezed and antisqueezed levels with error bars ->
+  the total efficiency and RMS jitter they share -> each pair alone,
+  which reads the jitter as loss -> the gain for -6 dB and the deepest
+  reachable squeezing, with error bars that carry the correlation of
+  efficiency and jitter (checked against a Monte Carlo over the fitted
+  covariance). Synthetic data with a fixed seed; runs in a few
+  seconds; `tests/test_tutorials.py` checks its output.
+
 ## 0.16.0 (2026-10-17)
 
 Three wrong answers fixed (symplectic eigenvalues, the output variance

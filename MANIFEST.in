@@ -1,0 +1,3 @@
+# Ship the tutorial scripts in the source distribution, so that
+# tests/test_tutorials.py runs from an unpacked sdist too (new in 0.17).
+graft examples
