@@ -1,4 +1,5 @@
-"""0.16: the tutorials in examples/ run and print what they document.
+"""0.16 and 0.17: the tutorials in examples/ run and print what they
+document.
 
 Each tutorial is run as a script; its output must equal the output
 quoted in its own docstring (which the README repeats), and its key
@@ -56,3 +57,19 @@ def test_squeezing_measurement_tutorial():
         assert abs(v - true) < 3 * s, (label, v, s)
     assert "chi^2 / dof = 57.6 / 57" in out
     assert "pair at 1 MHz: eta = 0.750 +/- 0.006" in out
+
+
+def test_loss_and_jitter_tutorial():
+    """0.17: the joint fit recovers the true total efficiency (0.81) and
+    jitter (25 mrad) within its error bars; each pair alone, which
+    assumes no jitter, reads a lower efficiency at the highest gain."""
+    out = _run("tutorial_loss_and_jitter.py")
+    e, se = _pm(out, "joint fit: eta")
+    t, st = _pm(out, "theta")
+    assert abs(e - 0.81) < 3 * se
+    assert abs(t - 25.0) < 3 * st                # mrad
+    alone = [float(ln.split()[-1]) for ln in out.splitlines()[1:7]]
+    assert alone[-1] < e - 3 * se
+    assert "chi^2 / dof = 6.4 / 4" in out
+    assert "-6 dB at 5 MHz: mu = 0.625 +/- 0.006" in out
+    assert "deepest reachable: -6.37 +/- 0.02 dB at mu = 0.788" in out

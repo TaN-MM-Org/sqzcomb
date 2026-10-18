@@ -173,7 +173,10 @@ def test_shot_noise_normalize_refusals_and_csv_checks():
 
 def test_clearance_conventions():
     # default: dark relative to the pure shot noise (unchanged)
-    assert dark_from_clearance_db(10.0) == 0.05
+    # (0.17: 0.5 * 10 ** -1 is 0.05 exactly only with a correctly
+    # rounded pow; allow two units of rounding)
+    assert dark_from_clearance_db(10.0) == pytest.approx(
+        0.05, rel=2 * np.finfo(float).eps, abs=0)
     # trace gap: (0.5 + V) / V = 10^(c/10), checked by the forward map
     for c in (3.0, 10.0, 15.0, 30.0):
         v = dark_from_clearance_db(c, trace_gap=True)

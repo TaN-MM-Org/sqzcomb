@@ -138,12 +138,26 @@ def test_optimal_quadrature_is_bit_identical_to_the_per_angle_path():
             at = [output_quadrature_variance(M, 0.8, x, 0, 1, phi=p, **kw)
                   for x, p in zip(ws, new[a])]
             assert np.array_equal(new[k], at)
-            assert np.allclose(new[k], ref[k], rtol=1e-13, atol=0)
+            assert np.all(np.abs(new[k] - ref[k]) <= _c0_r_tol(new))
     ref = quadrature_extremes(lambda p: np.array([
         output_quadrature_variance(TWIN, 0.8, x, 0, 2, phi=p,
                                    mode_index_b=1) for x in ws]))
     new = optimal_quadrature(TWIN, 0.8, ws, 0, 2, mode_index_b=1)
-    assert np.allclose(new["v_min"], ref["v_min"], rtol=1e-13, atol=0)
+    assert np.all(np.abs(new["v_min"] - ref["v_min"]) <= _c0_r_tol(new))
+
+
+def _c0_r_tol(out):
+    """Tolerance for comparing a variance at the best angle with c0 -/+ r
+    (0.17: was a fixed rtol of 1e-13). c0 and r are formed from three
+    variances of size up to v_max by a handful of roundings, so c0 - r
+    carries an absolute error of a few eps * v_max: relative to v_min
+    that is a few eps * v_max / v_min, about 40 eps for the first case
+    here. The measured differences reached 1.1e-14 (50 eps) on one
+    machine and 2.2e-15 on another: an error that scales with
+    v_max / v_min, which a fixed relative bound does not follow.
+    Allowed: 64 eps * v_max, absolute.
+    """
+    return 64 * np.finfo(float).eps * out["v_max"]
 
 
 # ----------------------------------------------------------------------
