@@ -130,6 +130,17 @@ def output_variance_ports(M, gammas, eta: float, port_mode, omega: float,
     and could come out negative, as in `output_quadrature_variance`;
     it is now summed from the rows of the transfer matrices.
     """
+    M, gammas, eta, ports, reads = _check_ports(
+        M, gammas, eta, port_mode, mode_index, n_th_port, n_th_loss,
+        allow_marginal)
+    return _ports_variance_at(_ports_resolvent(M, omega), gammas, eta,
+                              ports, reads, phi, n_th_port, n_th_loss)
+
+
+def _check_ports(M, gammas, eta, port_mode, mode_index, n_th_port,
+                 n_th_loss, allow_marginal):
+    """The input checks of `output_variance_ports`; returns (M as a
+    complex array, gammas, eta, ports, reads)."""
     gammas = np.asarray(gammas, dtype=float)
     n = gammas.size
     if not (0.0 <= eta <= 1.0):
@@ -141,10 +152,25 @@ def output_variance_ports(M, gammas, eta: float, port_mode, omega: float,
         raise ValueError("M and gammas disagree on the number of modes")
     _check_spectra_stability(M, allow_marginal)
     ports, reads = _port_indices(port_mode, mode_index, n)
+    return M, gammas, eta, ports, reads
 
-    m2 = 2 * n
+
+def _ports_resolvent(M, omega):
+    """G(omega) = (-i omega I - M)^-1, as `output_variance_ports` forms
+    it."""
+    m2 = M.shape[0]
     ident = np.eye(m2, dtype=complex)
-    G = np.linalg.inv(-1j * omega * ident - M)
+    return np.linalg.inv(-1j * omega * ident - M)
+
+
+def _ports_variance_at(G, gammas, eta, ports, reads, phi, n_th_port,
+                       n_th_loss):
+    """The variance of `output_variance_ports` from the resolvent G and
+    the checked inputs (split out in 0.17 so that a model evaluated at
+    several angles builds G once per frequency; the operations are the
+    ones `output_variance_ports` has always done)."""
+    n = gammas.size
+    m2 = 2 * n
 
     # monitored bus: amplitude sqrt(2 eta gamma_j) on each port mode
     amp_port = np.zeros(n)

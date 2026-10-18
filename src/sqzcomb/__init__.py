@@ -44,7 +44,7 @@ from .fitnoise import (ModelFit, NoiseFit, fit_noise_spectra,
                        fit_spectra_model, jitter_average,
                        molecule_spectra_model, noise_spectrum_db,
                        parametric_spectra_model)
-from .inference import infer_source
+from .inference import fit_squeezing_pairs, infer_source
 from .lab import (design_noise_frequencies, gain_for_squeezing,
                   load_spectra_csv,
                   plan_noise_measurement, ring_from_threshold,
@@ -60,9 +60,10 @@ from .technical import (classical_noise_variance,
                         pump_noise_drive, resonance_noise_drive)
 from .pulsed import (covariance_evolution, parametric_pulse_drift,
                      temporal_mode_variance)
-from .resonance import fit_resonance_transmission, through_transmission
+from .resonance import (fit_resonance_transmission, fit_split_resonance,
+                        split_transmission, through_transmission)
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -109,4 +110,6 @@ __all__ = [
     # new in 0.16
     "fit_resonance_transmission", "through_transmission",
     "gain_for_squeezing",
+    # new in 0.17
+    "fit_squeezing_pairs", "fit_split_resonance", "split_transmission",
 ]

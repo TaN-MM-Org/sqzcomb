@@ -391,7 +391,8 @@ def parametric_spectra_model(detuned=False, jitter=False, dark=False):
     return names, model
 
 
-def molecule_spectra_model(port="aux", detuned=False):
+def molecule_spectra_model(port: str = "aux",
+                           detuned: bool = False) -> tuple:
     """Two-ring photonic molecule model for `fit_spectra_model`.
 
     Parameters: mu (gain on the main ring), J (inter-ring coupling),
@@ -407,7 +408,8 @@ def molecule_spectra_model(port="aux", detuned=False):
     traces are read at the fixed angles above, which is only right
     for a molecule on resonance.
     """
-    from .molecule import output_variance_ports, photonic_molecule
+    from .molecule import (_check_ports, _ports_resolvent,
+                           _ports_variance_at, photonic_molecule)
     if port not in ("main", "aux"):
         raise ValueError("port must be 'main' or 'aux'")
     names = ["mu", "J", "gamma", "eta", "kappa_hz"] + (
@@ -424,11 +426,21 @@ def molecule_spectra_model(port="aux", detuned=False):
             2.0 * np.pi * float(p["kappa_hz"]))
         eta = float(p["eta"])
         ph_sq = float(p["phi_sq"]) if detuned else ph0
-        v_sq = np.array([output_variance_ports(M, g, eta, pm, o,
-                                               phi=ph_sq) for o in om])
-        v_an = np.array([output_variance_ports(
-            M, g, eta, pm, o, phi=ph_sq + np.pi / 2.0) for o in om])
-        return {"squeezed": v_sq, "anti": v_an}
+        # each value is what output_variance_ports(M, g, eta, pm, o,
+        # phi=...) returns (the same operations), with the checks run
+        # once and the resolvent built once per frequency for both
+        # angles (0.17; tested against the per-call path)
+        Mc, gc, eta, ports, reads = _check_ports(M, g, eta, pm, None, 0.0,
+                                                 0.0, False)
+        v_sq, v_an = np.empty(om.size), np.empty(om.size)
+        for k, o in enumerate(np.ravel(om)):
+            G = _ports_resolvent(Mc, o)
+            v_sq[k] = _ports_variance_at(G, gc, eta, ports, reads, ph_sq,
+                                         0.0, 0.0)
+            v_an[k] = _ports_variance_at(G, gc, eta, ports, reads,
+                                         ph_sq + np.pi / 2.0, 0.0, 0.0)
+        return {"squeezed": v_sq.reshape(np.shape(om)),
+                "anti": v_an.reshape(np.shape(om))}
 
     return names, model
 

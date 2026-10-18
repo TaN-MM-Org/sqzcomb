@@ -1,5 +1,5 @@
 """Linewidth and escape efficiency from a linear transmission scan
-(new in 0.16).
+(new in 0.16; split resonances new in 0.17).
 
 `RingSpec` needs the loaded linewidth kappa and the escape efficiency
 eta = kappa_ex / kappa, and every detected-squeezing prediction scales
@@ -43,8 +43,9 @@ which is designed to be strongly over-coupled, `branch="over"` is the
 usual case, but it is a fact about your device to check, not a default.
 
 What the fit does not model: a resonance split into a doublet by
-backscattering, a dip distorted by thermal or Kerr shifts at too high a
-power (a triangular shape), and Fano-shaped dips. With measurement
+backscattering (fitted by `fit_split_resonance`, new in 0.17, below), a
+dip distorted by thermal or Kerr shifts at too high a power (a
+triangular shape), and Fano-shaped dips. With measurement
 errors `sigma` given, a chi-square test refuses data the single
 Lorentzian does not describe. Without them the fit cannot tell, so look
 at the residuals (`model` is returned).
@@ -55,7 +56,8 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.stats import chi2 as _chi2
 
-__all__ = ["through_transmission", "fit_resonance_transmission"]
+__all__ = ["through_transmission", "fit_resonance_transmission",
+           "split_transmission", "fit_split_resonance"]
 
 
 def through_transmission(f_hz, f0_hz: float, kappa_hz: float,
@@ -76,8 +78,16 @@ def through_transmission(f_hz, f0_hz: float, kappa_hz: float,
         raise ValueError("kappa_hz must be finite and positive")
     if not (0.0 <= e <= 1.0):
         raise ValueError("eta_esc must lie in [0, 1]")
+    _check_finite_level(f0_hz, baseline)
     x = 2.0 * (np.asarray(f_hz, dtype=float) - float(f0_hz)) / k
     return float(baseline) * (1.0 - 4.0 * e * (1.0 - e) / (1.0 + x * x))
+
+
+def _check_finite_level(f0_hz, baseline):
+    """f0_hz and baseline must be finite (new in 0.17: a NaN gave an
+    all-NaN curve without an error)."""
+    if not (np.isfinite(float(f0_hz)) and np.isfinite(float(baseline))):
+        raise ValueError("f0_hz and baseline must be finite")
 
 
 def _dip(p, u, fit_slope):
@@ -238,7 +248,8 @@ def fit_resonance_transmission(f_hz, transmission, sigma=None,
             f"(chi^2 = {chi2:.4g} for {chi2_dof} degrees of freedom, "
             f"p = {p_value:.2g}): a split (backscattering) doublet, a "
             "dip distorted by heating at too high a power, or "
-            "underestimated errors")
+            "underestimated errors (a doublet can be fitted with "
+            "fit_split_resonance, new in 0.17)")
 
     root = np.sqrt(max(1.0 - D, 0.0))
     eta_under = 0.5 * (1.0 - root)
@@ -269,8 +280,13 @@ def fit_resonance_transmission(f_hz, transmission, sigma=None,
         if eta_sigma is None:
             out["kappa_ex_hz_sigma"] = out["kappa_0_hz_sigma"] = None
         else:
-            # d eta / dD = -/+ 1 / (4 sqrt(1 - D)) for under / over
-            de = (1.0 if branch == "over" else -1.0) / (4.0 * root)
+            # d eta / dD = +/- 1 / (4 sqrt(1 - D)) for under / over
+            # (eta = (1 -/+ sqrt(1 - D)) / 2). Fixed in 0.17: the sign
+            # was reversed for both branches, which flipped the
+            # correlation term of the kappa-D covariance and gave
+            # kappa_0 twice its error bar on an over-coupled ring (see
+            # the CHANGELOG)
+            de = (-1.0 if branch == "over" else 1.0) / (4.0 * root)
             c_kk, c_kd, c_dd = cov_phys[1, 1], cov_phys[1, 2], \
                 cov_phys[2, 2]
             for key, g_k, g_d in (("kappa_ex_hz", eta, kap * de),
@@ -278,4 +294,262 @@ def fit_resonance_transmission(f_hz, transmission, sigma=None,
                 var = g_k * g_k * c_kk + 2 * g_k * g_d * c_kd \
                     + g_d * g_d * c_dd
                 out[key + "_sigma"] = float(np.sqrt(max(var, 0.0)))
+    return out
+
+
+# ----------------------------------------------------------------------
+# A resonance split by backscattering (new in 0.17)
+#
+# Backscattering from sidewall roughness couples the clockwise (cw) and
+# counterclockwise (ccw) modes of a ring (T. J. Kippenberg, S. M.
+# Spillane and K. J. Vahala, "Modal coupling in traveling-wave
+# resonators," Opt. Lett. 27, 1669 (2002)). With equal decay rates and
+# a lossless coupling, in the package's units (rates in units of
+# kappa / 2, the laser detuning x = 2 (f - f0) / kappa) the coupled-mode
+# equations driven from the forward bus are
+#
+#     d a_cw / dt  = -(1 - i x) a_cw  - i b a_ccw + sqrt(2 eta) s_in,
+#     d a_ccw / dt = -(1 - i x) a_ccw - i b a_cw,
+#
+# with b the coupling in units of kappa / 2 and eta = kappa_ex / kappa the
+# escape efficiency of each traveling-wave mode into its own direction
+# of the bus. In the steady state the forward amplitude is (up to an
+# overall sign, which the package's output convention s_out =
+# sqrt(2 eta) a_cw - s_in reverses)
+#
+#     t = 1 - 2 eta (1 - i x) / ((1 - i x)^2 + b^2)
+#       = 1 - eta / (1 - i (x - b)) - eta / (1 - i (x + b)),
+#
+# two standing-wave modes at x = -/+ b, each of loaded linewidth kappa,
+# so the two dips sit b kappa apart in frequency ("splitting"). b = 0
+# gives back t = 1 - 2 eta / (1 - i x) of the single resonance. The
+# tests derive t again from the drift matrix of `photonic_molecule`
+# (two passive modes coupled by J = b, the bus on one of them), a
+# separate code path.
+#
+# Unlike the single dip, |t|^2 is not symmetric under eta -> 1 - eta
+# once b > 0: the coefficient of eta in |t|^2 is -2 (|L+|^2 + |L-|^2)
+# and that of eta^2 is |L+ + L-|^2, with L+/- = 1 / (1 - i (x -/+ b)),
+# and the two are equal and opposite only when L+ = L-. A resolved
+# doublet therefore carries information on the coupling regime, which
+# `fit_split_resonance` reports as the chi-square difference of the two
+# branches.
+
+
+def split_transmission(f_hz, f0_hz: float, kappa_hz: float,
+                       eta_esc: float, splitting_hz: float,
+                       baseline: float = 1.0):
+    """Power transmission past a resonance split by backscattering.
+
+    f_hz : laser frequencies (Hz); f0_hz : the center of the doublet;
+    kappa_hz : loaded linewidth (FWHM, Hz) of each standing-wave mode;
+    eta_esc : escape efficiency kappa_ex / kappa of each traveling-wave
+    mode in [0, 1]; splitting_hz : frequency distance of the two dips
+    (>= 0; 0 gives `through_transmission`); baseline : off-resonance
+    level. Returns baseline * |t|^2 with t of the comment above
+    (Kippenberg, Spillane and Vahala, Opt. Lett. 27, 1669 (2002)).
+    """
+    k = float(kappa_hz)
+    e = float(eta_esc)
+    s = float(splitting_hz)
+    if not (np.isfinite(k) and k > 0.0):
+        raise ValueError("kappa_hz must be finite and positive")
+    if not (0.0 <= e <= 1.0):
+        raise ValueError("eta_esc must lie in [0, 1]")
+    if not (np.isfinite(s) and s >= 0.0):
+        raise ValueError("splitting_hz must be finite and >= 0")
+    _check_finite_level(f0_hz, baseline)
+    x = 2.0 * (np.asarray(f_hz, dtype=float) - float(f0_hz)) / k
+    return float(baseline) * _split_power(x, e, s / k)
+
+
+def _split_power(x, eta, b):
+    """|t|^2 of the doublet at scaled detuning x (b in units of kappa/2:
+    the dips are at x = -/+ b)."""
+    t = 1.0 - eta / (1.0 - 1j * (x - b)) - eta / (1.0 - 1j * (x + b))
+    return t.real * t.real + t.imag * t.imag
+
+
+def fit_split_resonance(f_hz, transmission, sigma, fit_slope: bool = False,
+                        min_p_value: float = 1e-6,
+                        cond_max: float = 1e12) -> dict:
+    """Fit a through-port dip split into a doublet by backscattering.
+
+    The model of `split_transmission` (Kippenberg, Spillane and Vahala,
+    Opt. Lett. 27, 1669 (2002)): two standing-wave modes of equal loaded
+    linewidth kappa, split by a lossless coupling of the cw and ccw
+    modes, each traveling-wave mode coupled to the bus with escape
+    efficiency eta. For a ring whose dip `fit_resonance_transmission`
+    refuses as "not one Lorentzian" because it is split.
+
+    f_hz, transmission, sigma, fit_slope, min_p_value : as in
+        `fit_resonance_transmission`, except that sigma is required
+        (the branches are compared by chi-square).
+    cond_max : largest allowed squared condition number of the
+        column-scaled Jacobian (the data must determine every
+        parameter).
+
+    The fit is done twice, once with eta in [0, 1/2] (under-coupled)
+    and once with eta in [1/2, 1] (over-coupled). Returns a dict:
+        under, over : each a dict with f0_hz, kappa_hz, splitting_hz,
+            eta_esc, baseline (and slope_per_hz), their 1-sigma errors
+            in `sigma`, chi2, p_value and model; None for a branch whose
+            fit fails the model check (p below `min_p_value`) or is
+            not determined;
+        chi2_dof : the degrees of freedom (points - parameters);
+        delta_chi2 : chi2(under) - chi2(over) when both branches fit
+            (positive favors over-coupling). For Gaussian errors it is
+            -2 ln of the likelihood ratio of the two answers; a value
+            near 0 means the scan cannot tell them apart, as for an
+            unsplit dip.
+
+    Refused (ValueError): the input refusals of
+    `fit_resonance_transmission`; a splitting not resolved (below 3
+    sigma, or a fit whose Jacobian is singular): use
+    `fit_resonance_transmission` then; and data that neither branch
+    describes (chi-square p-value below `min_p_value`).
+    """
+    f = np.asarray(f_hz, dtype=float).ravel()
+    T = np.asarray(transmission, dtype=float).ravel()
+    if f.shape != T.shape:
+        raise ValueError("f_hz and transmission must have the same length")
+    n_par = 6 if fit_slope else 5
+    if f.size < 12:
+        raise ValueError("need at least 12 points across the doublet")
+    if not (np.all(np.isfinite(f)) and np.all(np.isfinite(T))):
+        raise ValueError("frequencies and transmission must be finite")
+    if np.unique(f).size != f.size:
+        raise ValueError("the scan frequencies must be distinct")
+    if sigma is None:
+        raise ValueError("sigma is required: the two coupling branches "
+                         "are compared by chi-square")
+    sig = np.broadcast_to(np.asarray(sigma, dtype=float), f.shape)
+    if not (np.all(np.isfinite(sig)) and np.all(sig > 0.0)):
+        raise ValueError("sigma must be finite and positive")
+    pmin = float(min_p_value)
+    if not (0.0 <= pmin < 1.0):
+        raise ValueError("min_p_value must lie in [0, 1)")
+
+    fc = 0.5 * (f.min() + f.max())
+    span = float(f.max() - f.min())
+    u = (f - fc) / span
+    tscale = float(np.max(np.abs(T)))
+    if not tscale > 0.0:
+        raise ValueError("the transmission is zero everywhere")
+    y = T / tscale
+    ws = tscale / sig
+
+    def model(p):
+        u0, w, eta, s, b0 = p[:5]
+        base = b0 + (p[5] * u if fit_slope else 0.0)
+        return base * _split_power(2.0 * (u - u0) / w, eta, s / w)
+
+    def resid(p):
+        return ws * (model(p) - y)
+
+    # starting values: the dip's center, its overall width, a range of
+    # splittings
+    b0 = float(np.percentile(y, 90))
+    below = u[y < b0 * (1.0 - 0.5 * (1.0 - y.min() / b0))] if b0 > 0 \
+        else u
+    u_c = float(0.5 * (below.min() + below.max())) if below.size else 0.0
+    full = float(below.max() - below.min()) if below.size > 1 else 0.1
+    full = max(full, 3.0 / f.size)
+    dof = f.size - n_par
+    branches = {}
+    for name, (e_lo, e_hi) in (("under", (0.0, 0.5)), ("over", (0.5, 1.0))):
+        best = None
+        starts = [(frac, e_lo + q * (e_hi - e_lo))
+                  for frac in (0.4, 0.15, 0.7) for q in (0.75, 0.25)]
+        for frac, e0 in starts:
+            # stop once a start fits acceptably (p > 0.01); the other
+            # starts only matter when the first ones fail
+            if best is not None and _chi2.sf(2.0 * best.cost, dof) > 0.01:
+                break
+            s0 = frac * full
+            w0 = max(full - s0, 3.0 / f.size)
+            x0 = [u_c, w0, e0, s0, b0] + ([0.0] if fit_slope else [])
+            lo = [-1.0, 1e-9, e_lo, 0.0, 0.0] \
+                + ([-np.inf] if fit_slope else [])
+            hi = [1.0, 10.0, e_hi, 10.0, np.inf] \
+                + ([np.inf] if fit_slope else [])
+            r = least_squares(resid, x0, bounds=(lo, hi),
+                              x_scale="jac", xtol=1e-15, ftol=1e-15,
+                              gtol=1e-15)
+            if r.success and (best is None or r.cost < best.cost):
+                best = r
+        branches[name] = best
+    if all(r is None for r in branches.values()):
+        raise RuntimeError("the doublet fit failed from every start")
+
+    out = {"chi2_dof": dof}
+    results = {}
+    for name, r in branches.items():
+        results[name] = None
+        if r is None:
+            continue
+        p = r.x
+        J = r.jac
+        norms = np.sqrt(np.sum(J * J, axis=0))
+        if np.any(norms == 0.0):
+            continue
+        sv = np.linalg.svd(J / norms, compute_uv=False)
+        if sv[-1] <= 0.0 or (sv[0] / sv[-1]) ** 2 > float(cond_max):
+            continue
+        cov = np.linalg.inv(J.T @ J)
+        sd = np.sqrt(np.diag(cov))
+        chi2 = float(2.0 * r.cost)
+        results[name] = {
+            "p": p, "sd": sd, "cov": cov, "chi2": chi2,
+            "p_value": float(_chi2.sf(chi2, dof))}
+    good = {k: v for k, v in results.items() if v is not None}
+    if not good:
+        raise ValueError(
+            "the splitting is not resolved (the doublet model is not "
+            "determined by these data); if the dip is one Lorentzian, "
+            "use fit_resonance_transmission")
+    best_name = min(good, key=lambda k: good[k]["chi2"])
+    bp = good[best_name]
+    if not bp["p"][3] > 3.0 * bp["sd"][3]:
+        raise ValueError(
+            f"the splitting {bp['p'][3] * span:.4g} Hz is not resolved "
+            f"(error {bp['sd'][3] * span:.2g} Hz); use "
+            "fit_resonance_transmission")
+    if bp["p_value"] < pmin:
+        raise ValueError(
+            f"the doublet model (which contains the single dip) does not "
+            f"describe these data (best chi^2 = {bp['chi2']:.4g} for "
+            f"{dof} degrees of freedom, p = {bp['p_value']:.2g})")
+    kap = bp["p"][1] * span
+    f0 = fc + bp["p"][0] * span
+    if not (f.min() <= f0 - 0.5 * bp["p"][3] * span - kap
+            and f.max() >= f0 + 0.5 * bp["p"][3] * span + kap):
+        raise ValueError(
+            "the scan does not reach one linewidth beyond both dips; the "
+            "off-resonance level would be extrapolated. Widen the sweep")
+    for name in ("under", "over"):
+        v = results[name]
+        if v is None or v["p_value"] < pmin:
+            out[name] = None
+            continue
+        p, sd = v["p"], v["sd"]
+        d = {"f0_hz": float(fc + p[0] * span),
+             "kappa_hz": float(p[1] * span),
+             "eta_esc": float(p[2]),
+             "splitting_hz": float(p[3] * span),
+             "baseline": float(p[4] * tscale),
+             "sigma": {"f0_hz": float(sd[0] * span),
+                       "kappa_hz": float(sd[1] * span),
+                       "eta_esc": float(sd[2]),
+                       "splitting_hz": float(sd[3] * span),
+                       "baseline": float(sd[4] * tscale)},
+             "chi2": v["chi2"], "p_value": v["p_value"],
+             "model": model(p) * tscale}
+        if fit_slope:
+            d["slope_per_hz"] = float(p[5] * tscale / span)
+            d["sigma"]["slope_per_hz"] = float(sd[5] * tscale / span)
+        out[name] = d
+    out["delta_chi2"] = (out["under"]["chi2"] - out["over"]["chi2"]
+                         if out["under"] is not None
+                         and out["over"] is not None else None)
     return out

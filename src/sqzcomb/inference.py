@@ -69,7 +69,7 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["infer_source"]
+__all__ = ["infer_source", "fit_squeezing_pairs"]
 
 _VAC = 0.5
 
@@ -231,3 +231,225 @@ def _invert(s_db, a_db, P=1.0, theta=0.0, branch=None):
             "sq_db_source": float(10.0 * np.log10(v_s / _VAC)),
             "anti_db_source": float(10.0 * np.log10(v_a / _VAC)),
             "branch": branch}
+
+
+# ----------------------------------------------------------------------
+# Loss and phase jitter from pairs at several gains (new in 0.17)
+
+
+def _pairs_model(eta, mix, g, dark, dark_in_reference):
+    """Detected squeezed and antisqueezed variances (vacuum 1/2) of pure
+    sources V_s = e^{-g}/2, V_a = e^{g}/2 after a mixing fraction `mix`
+    of the other quadrature (phase jitter, mix = <sin^2 theta>), the
+    efficiency eta and the dark noise (as `detected_variance`)."""
+    v_s = 0.5 * np.exp(-g)
+    v_a = 0.5 * np.exp(g)
+    s = (1.0 - mix) * v_s + mix * v_a
+    a = (1.0 - mix) * v_a + mix * v_s
+    S = eta * s + (1.0 - eta) * _VAC + dark
+    A = eta * a + (1.0 - eta) * _VAC + dark
+    if dark_in_reference:
+        S = _VAC * S / (_VAC + dark)
+        A = _VAC * A / (_VAC + dark)
+    return S, A
+
+
+def fit_squeezing_pairs(sq_db, anti_db, sigma_db, sigma_anti_db=None,
+                        fit_jitter: bool = True, dark_noise: float = 0.0,
+                        dark_in_reference: bool = False,
+                        cond_max: float = 1e10) -> dict:
+    """Total efficiency and phase jitter from squeezed / antisqueezed
+    pairs measured at several pump levels (new in 0.17).
+
+    One measured pair cannot separate loss from phase jitter (two
+    numbers, three unknowns: see `infer_source`). Pairs taken at
+    several pump levels with the same detection chain can: loss pulls
+    every pair toward shot noise by the same fraction, while jitter
+    mixes in a fraction of the antisqueezed variance, which grows with
+    the gain. Squeezing experiments describe their data in this way
+    (for example B. Shajilal et al., arXiv:2211.06632 (2022), model
+    their squeezing and antisqueezing against pump power with a total
+    efficiency and a jitter angle).
+
+    Model, per pair i: a pure squeezed source V_s = e^{-g_i}/2,
+    V_a = e^{g_i}/2 (one free g_i per pair, so no pump-to-gain law is
+    assumed), a jitter that mixes the fraction m = <sin^2 theta> of the
+    other quadrature into each (for Gaussian jitter of RMS theta_rms,
+    m = (1 - exp(-2 theta_rms^2)) / 2, the law of
+    `phase_noise_variance`), then the efficiency eta and the known dark
+    noise as in `detected_variance`. Loss and jitter commute, and the
+    output of the package's single-mode squeezer
+    (`single_mode_parametric` without detuning) at any analysis
+    frequency is exactly such a pure source behind its escape
+    efficiency, so eta is the escape efficiency times the detection
+    efficiency (both checked in the tests).
+
+    sq_db, anti_db : the N measured pairs, dB relative to shot noise
+        (squeezed below 0 dB, antisqueezed above).
+    sigma_db : 1-sigma error of each squeezed level (scalar or one per
+        pair); sigma_anti_db : the same for the antisqueezed levels
+        (default: sigma_db). Required: the fit weighs the two traces
+        against each other and tests the model with chi-square.
+    fit_jitter : False holds m = 0 (loss only); then one pair is
+        enough and reproduces `infer_source`.
+    dark_noise, dark_in_reference : a known dark-noise variance (vacuum
+        units) and its convention, as in `detected_variance`; leave 0
+        when the traces were dark-subtracted.
+    cond_max : largest allowed squared condition number of the
+        column-scaled Jacobian; beyond it the pairs do not separate the
+        parameters (for example all taken at about the same gain) and
+        the fit refuses.
+
+    Returns a dict:
+        eta, eta_sigma : total efficiency;
+        mix, mix_sigma : the mixing fraction m (0 without jitter);
+        theta_rms : the Gaussian RMS jitter (rad) for that m;
+        theta_rms_sigma : its error (first order), or None when m is
+            within 3 mix_sigma of zero (the data are then consistent
+            with no jitter and an error bar on theta is not meaningful);
+        theta_rms_upper : theta_rms at m + 2 mix_sigma (an upper limit
+            at about 97.7 % for a Gaussian error of m);
+        sq_db_source, anti_db_source, sq_db_source_sigma : each pair's
+            source level before loss and jitter (arrays);
+        chi2, chi2_dof, p_value : the model check (dof = N - 2 with
+            jitter, N - 1 without; p_value is None at dof 0);
+        model_sq_db, model_anti_db : the fitted levels;
+        names, covariance : fitted parameter names and their covariance
+            (eta, [mix,] g_1..g_N).
+
+    Refused (ValueError): fewer than 2 pairs with fit_jitter (1 without),
+    inputs of different lengths, non-finite values, a squeezed level at
+    or above shot noise or an antisqueezed level at or below it, a
+    non-positive sigma, and pairs that do not determine the parameters.
+    """
+    from scipy.optimize import least_squares
+    from scipy.stats import chi2 as _chi2
+    from .detection import _check_dark
+
+    s = np.atleast_1d(np.asarray(sq_db, dtype=float)).ravel()
+    a = np.atleast_1d(np.asarray(anti_db, dtype=float)).ravel()
+    n = s.size
+    if a.shape != s.shape:
+        raise ValueError("sq_db and anti_db must have the same length")
+    n_min = 2 if fit_jitter else 1
+    if n < n_min:
+        raise ValueError(
+            f"need at least {n_min} pair(s): one pair has two numbers for "
+            "three unknowns (efficiency, jitter, source); measure pairs "
+            "at several pump levels" if fit_jitter else
+            "need at least one pair")
+    if not (np.all(np.isfinite(s)) and np.all(np.isfinite(a))):
+        raise ValueError("the measured dB values must be finite")
+    if np.any(s >= 0.0):
+        raise ValueError("every squeezed level must lie below shot noise "
+                         "(0 dB)")
+    if np.any(a <= 0.0):
+        raise ValueError("every antisqueezed level must lie above shot "
+                         "noise (0 dB)")
+    sig_s = np.broadcast_to(np.asarray(sigma_db, dtype=float),
+                            s.shape).astype(float)
+    sig_a = sig_s if sigma_anti_db is None else np.broadcast_to(
+        np.asarray(sigma_anti_db, dtype=float), s.shape).astype(float)
+    for sg in (sig_s, sig_a):
+        if not (np.all(np.isfinite(sg)) and np.all(sg > 0.0)):
+            raise ValueError("sigma_db and sigma_anti_db must be finite "
+                             "and positive")
+    dark = _check_dark(dark_noise)
+    dir_ = bool(dark_in_reference)
+    w = np.concatenate([1.0 / sig_s, 1.0 / sig_a])
+    data = np.concatenate([s, a])
+
+    def unpack(p):
+        if fit_jitter:
+            return p[0], p[1], p[2:]
+        return p[0], 0.0, p[1:]
+
+    def model_db(p):
+        eta, mix, g = unpack(p)
+        S, A = _pairs_model(eta, mix, g, dark, dir_)
+        return 10.0 * np.log10(np.concatenate([S, A]) / _VAC)
+
+    def resid(p):
+        return w * (model_db(p) - data)
+
+    # starting values: the loss-only inversion of each pair, where it
+    # exists, gives the efficiency; each g from the antisqueezed level
+    etas = []
+    for si, ai in zip(s, a):
+        try:
+            etas.append(_invert(si, ai)["eta"])
+        except ValueError:
+            pass
+    eta0 = float(np.clip(np.median(etas) if etas else 0.5, 0.05, 1.0))
+
+    def g_start(e):
+        A = _VAC * 10.0 ** (a / 10.0)
+        if dir_:
+            A = A * (_VAC + dark) / _VAC
+        va = (A - dark - (1.0 - e) * _VAC) / e
+        return np.log(2.0 * np.maximum(va, 0.5 * (1.0 + 1e-6)))
+
+    g_hi = 80.0
+    lo = [1e-6] + ([0.0] if fit_jitter else []) + [1e-9] * n
+    hi = [1.0] + ([0.5 - 1e-9] if fit_jitter else []) + [g_hi] * n
+    starts = []
+    for m0 in ((0.0, 1e-3, 1e-2, 0.05) if fit_jitter else (None,)):
+        x = [eta0] + ([m0] if fit_jitter else []) \
+            + list(np.clip(g_start(eta0), 1e-6, g_hi - 1.0))
+        starts.append(np.clip(x, lo, hi))
+    best = None
+    for x0 in starts:
+        r = least_squares(resid, x0, bounds=(lo, hi), jac="3-point",
+                          x_scale="jac", xtol=1e-15, ftol=1e-15,
+                          gtol=1e-15)
+        if r.success and (best is None or r.cost < best.cost):
+            best = r
+    if best is None:
+        raise RuntimeError("the pair fit failed from every start")
+    p = best.x
+    J = best.jac
+    norms = np.sqrt(np.sum(J * J, axis=0))
+    if np.any(norms == 0.0):
+        raise ValueError("the pairs do not determine the parameters "
+                         "(a parameter has no effect on the data)")
+    sv = np.linalg.svd(J / norms, compute_uv=False)
+    if sv[-1] <= 0.0 or (sv[0] / sv[-1]) ** 2 > float(cond_max):
+        raise ValueError(
+            "the pairs do not separate the efficiency from the jitter: "
+            "take them at clearly different pump levels (different "
+            "antisqueezing), or fit loss only (fit_jitter=False)")
+    cov = np.linalg.inv(J.T @ J)
+    sd = np.sqrt(np.diag(cov))
+    eta, mix, g = unpack(p)
+    k0 = 2 if fit_jitter else 1
+    chi2 = float(2.0 * best.cost)
+    dof = 2 * n - p.size
+    p_value = float(_chi2.sf(chi2, dof)) if dof > 0 else None
+    mod = model_db(p)
+    out = {"eta": float(eta), "eta_sigma": float(sd[0]),
+           "mix": float(mix), "mix_sigma": float(sd[1]) if fit_jitter
+           else 0.0}
+    m_sig = out["mix_sigma"]
+
+    def theta_of(m):
+        m = min(max(m, 0.0), 0.5 - 1e-15)
+        return float(np.sqrt(-0.5 * np.log1p(-2.0 * m)))
+
+    out["theta_rms"] = theta_of(mix)
+    if fit_jitter and mix > 3.0 * m_sig:
+        # d theta / d m = 1 / (2 theta (1 - 2 m))
+        out["theta_rms_sigma"] = float(
+            m_sig / (2.0 * out["theta_rms"] * (1.0 - 2.0 * mix)))
+    else:
+        out["theta_rms_sigma"] = None
+    out["theta_rms_upper"] = theta_of(mix + 2.0 * m_sig)
+    db_per_g = 10.0 / np.log(10.0)
+    out["sq_db_source"] = -db_per_g * np.asarray(g, dtype=float)
+    out["anti_db_source"] = db_per_g * np.asarray(g, dtype=float)
+    out["sq_db_source_sigma"] = db_per_g * sd[k0:]
+    out.update({"chi2": chi2, "chi2_dof": int(dof), "p_value": p_value,
+                "model_sq_db": mod[:n], "model_anti_db": mod[n:],
+                "names": ["eta"] + (["mix"] if fit_jitter else [])
+                + [f"g_{i}" for i in range(n)],
+                "covariance": cov})
+    return out
