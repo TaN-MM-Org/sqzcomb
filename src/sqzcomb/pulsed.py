@@ -67,13 +67,20 @@ def _as_drift(drift):
     return lambda t: M
 
 
-def _check_M(M, m2):
+def _check_M(M, m2, gammas):
+    """Shape, finiteness and (new in 0.18) damping of M(t): each mode
+    must be damped at its decay rate gammas[j], as in the spectra (see
+    `sqzcomb.spectra._check_damping`); otherwise the noise inputs
+    sqrt(2 gamma) would not match and even vacuum would come out
+    wrong."""
+    from .spectra import _check_damping
     M = np.asarray(M, dtype=complex)
     if M.shape != (m2, m2):
         raise ValueError("the drift matrix changed shape or is not the "
                          "doubled 2n x 2n form")
     if not np.all(np.isfinite(M)):
         raise ValueError("the drift matrix is not finite")
+    _check_damping(M, gammas)
     return M
 
 
@@ -110,6 +117,9 @@ def covariance_evolution(drift, t_span, t_eval=None, V0=None, gammas=None,
         the thermal state of n_th).
     gammas : decay rate of each mode (default 1, the package's
         normalization); n_th : bath occupation (scalar or per mode).
+        Since 0.18, M(t) must damp mode j at exactly gammas[j] (the
+        Hermitian part of its diagonal blocks equal to -diag(gammas)),
+        or the call is refused: the noise inputs are built from gammas.
     Returns (t, V) with V of shape (len(t), 2n, 2n). Integrated with
     scipy's DOP853 at the given tolerances.
     """
@@ -125,7 +135,7 @@ def covariance_evolution(drift, t_span, t_eval=None, V0=None, gammas=None,
         t_eval = np.array([t0, t1])
 
     def rhs(t, y):
-        M = _check_M(fM(t), m2)
+        M = _check_M(fM(t), m2, g)
         V = y.reshape(m2, m2)
         return (M @ V + V @ M.conj().T + D).ravel()
 
@@ -207,7 +217,7 @@ def temporal_mode_variance(drift, t_span, mode_function, eta=1.0, phi=0.0,
     y0 = np.concatenate([S0.ravel(), [0.0]])
 
     def rhs(t, y):
-        M = _check_M(fM(t), m2)
+        M = _check_M(fM(t), m2, g)
         fval = complex(mode_function(t))
         A = np.zeros((size, size), dtype=complex)
         A[:m2, :m2] = M

@@ -42,6 +42,19 @@ dip changes when the coupling gap is changed. For a squeezing ring,
 which is designed to be strongly over-coupled, `branch="over"` is the
 usual case, but it is a fact about your device to check, not a default.
 
+The phase settles it (new in 0.18, `fit_complex_transmission`). As x
+runs from -inf to +inf, t = 1 - 2 eta / (1 - i x) traces a circle in
+the complex plane through the off-resonance point 1, with center
+1 - eta and radius eta; on resonance it reaches 1 - 2 eta. The circle
+encloses the origin when eta > 1/2 (so the phase winds by 2 pi) and
+does not when eta < 1/2. A scan of the complex transmission (amplitude
+and phase, for example from an optical vector network analyzer or a
+heterodyne measurement against a reference) therefore fixes eta
+itself, with one error bar and no second branch. The fit allows for
+an unknown overall amplitude and phase, a linear phase from the delay
+of the setup, and either sign convention of the instrument's phase
+(`through_amplitude`).
+
 What the fit does not model: a resonance split into a doublet by
 backscattering (fitted by `fit_split_resonance`, new in 0.17, below), a
 dip distorted by thermal or Kerr shifts at too high a power (a
@@ -57,7 +70,8 @@ from scipy.optimize import least_squares
 from scipy.stats import chi2 as _chi2
 
 __all__ = ["through_transmission", "fit_resonance_transmission",
-           "split_transmission", "fit_split_resonance"]
+           "split_transmission", "fit_split_resonance",
+           "through_amplitude", "fit_complex_transmission"]
 
 
 def through_transmission(f_hz, f0_hz: float, kappa_hz: float,
@@ -552,4 +566,294 @@ def fit_split_resonance(f_hz, transmission, sigma, fit_slope: bool = False,
     out["delta_chi2"] = (out["under"]["chi2"] - out["over"]["chi2"]
                          if out["under"] is not None
                          and out["over"] is not None else None)
+    return out
+
+
+# ----------------------------------------------------------------------
+# The complex transmission: amplitude and phase (new in 0.18)
+
+
+def through_amplitude(f_hz, f0_hz: float, kappa_hz: float, eta_esc: float,
+                      amplitude: float = 1.0, phase: float = 0.0,
+                      delay_s: float = 0.0, conjugate: bool = False):
+    """Complex field transmission past one resonance on the bus.
+
+    f_hz, f0_hz, kappa_hz, eta_esc : as in `through_transmission`.
+    amplitude, phase : the off-resonance level of the field (any linear
+        unit) and its phase at f0 (rad).
+    delay_s : a delay of the setup (cables, fiber), which adds the
+        linear phase 2 pi delay_s (f - f0); its sign follows the phase
+        convention of the instrument.
+    conjugate : False for the physics convention (fields ~ e^{-i omega
+        t}), in which the resonance factor is 1 - 2 eta / (1 - i x);
+        True for the opposite convention (e^{+i omega t}, the usual
+        one in electrical engineering), 1 - 2 eta / (1 + i x).
+
+    Returns amplitude exp(i (phase + 2 pi delay_s (f - f0))) (1 - 2 eta
+    / (1 -/+ i x)) with x = 2 (f - f0) / kappa_hz; its squared modulus
+    is `through_transmission` with baseline amplitude^2. The resonance
+    factor is the package's T_ex = 2 eta G - 1 of a passive mode with
+    the overall sign reversed (see the module docstring), which only
+    shifts the phase by pi.
+    """
+    k = float(kappa_hz)
+    e = float(eta_esc)
+    if not (np.isfinite(k) and k > 0.0):
+        raise ValueError("kappa_hz must be finite and positive")
+    if not (0.0 <= e <= 1.0):
+        raise ValueError("eta_esc must lie in [0, 1]")
+    for name, v in (("f0_hz", f0_hz), ("amplitude", amplitude),
+                    ("phase", phase), ("delay_s", delay_s)):
+        if not np.isfinite(float(v)):
+            raise ValueError(f"{name} must be finite")
+    df = np.asarray(f_hz, dtype=float) - float(f0_hz)
+    s = -1.0 if conjugate else 1.0
+    x = 2.0 * df / k
+    lead = float(amplitude) * np.exp(1j * (float(phase)
+                                           + 2.0 * np.pi * float(delay_s) * df))
+    return lead * (1.0 - 2.0 * e / (1.0 - 1j * s * x))
+
+
+def _complex_dip(p, u, s, fit_delay):
+    """Model in scaled units: p = (u0, w, eta, a, phi[, tau]) with u the
+    scaled frequency, w the scaled linewidth and tau the phase slope per
+    unit of u."""
+    u0, w, eta, a, phi = p[:5]
+    tau = p[5] if fit_delay else 0.0
+    x = 2.0 * (u - u0) / w
+    return a * np.exp(1j * (phi + tau * (u - u0))) \
+        * (1.0 - 2.0 * eta / (1.0 - 1j * s * x))
+
+
+def fit_complex_transmission(f_hz, transmission, sigma=None,
+                             fit_delay: bool = True,
+                             min_p_value: float = 1e-6) -> dict:
+    """Linewidth and escape efficiency, with the coupling regime, from
+    the complex through-port transmission (amplitude and phase).
+
+    The power transmission of `fit_resonance_transmission` cannot tell
+    an over-coupled ring from an under-coupled one with the same
+    linewidth (eta and 1 - eta give the same dip). The phase can: the
+    complex transmission traces a circle that encloses the origin only
+    when eta > 1/2 (see the module docstring), so this fit returns one
+    eta with one error bar.
+
+    f_hz : laser frequencies of the scan (Hz; an offset is fine).
+    transmission : the complex field transmission at each frequency
+        (a complex array; amplitude in any linear unit, phase in any
+        reference). Real input is refused: use
+        `fit_resonance_transmission` for power data.
+    sigma : optional 1-sigma error of the real part and of the imaginary
+        part of each point (scalar or per point, the unit of
+        `transmission`; the noise is taken to be the same in both and
+        independent). With it the error bars are the weighted
+        least-squares ones and a chi-square test refuses data the model
+        does not describe (p < `min_p_value`); without it the error bars
+        are scaled by the scatter of the residuals.
+    fit_delay : also fit a linear phase 2 pi delay (f - f0) from the
+        delay of the setup (default True; with False the phase is taken
+        as constant across the scan).
+
+    Model: `through_amplitude` with free f0, kappa, eta, amplitude,
+    phase and delay, fitted in both phase conventions (`conjugate`
+    False and True); the better one is kept and reported. The fit starts
+    from a fit of |transmission|^2 with the single-dip model, which
+    gives the center, the width and the two candidate efficiencies, and
+    then from each candidate in each convention.
+
+    Returns a dict:
+        f0_hz, kappa_hz, eta_esc, kappa_ex_hz, kappa_0_hz : resonance
+            frequency, loaded linewidth (FWHM), escape efficiency, and
+            the external and intrinsic linewidths eta kappa and
+            (1 - eta) kappa, with their 1-sigma errors in `sigma`
+            (those of kappa_ex and kappa_0 carry the correlation of
+            kappa and eta);
+        regime : "over" or "under" when eta is more than 3 sigma away
+            from 1/2, "critical" otherwise; regime_z : (eta - 1/2) /
+            sigma_eta;
+        amplitude, phase_rad, delay_s, conjugate : the fitted
+            off-resonance level, its phase at f0 (in (-pi, pi]), the
+            delay (0 when not fitted) and the phase convention of the
+            data;
+        covariance : of (f0_hz, kappa_hz, eta_esc, amplitude, phase_rad
+            [, delay_s]);
+        chi2, chi2_dof, p_value : with sigma (None otherwise);
+            chi2_dof = 2 N - number of parameters;
+        model : the fitted complex transmission at f_hz.
+
+    Refused (ValueError): input that is not complex, fewer than 8
+    points, non-finite values, repeated frequencies or a non-positive
+    sigma; a dip not resolved (eta below 5 of its sigma); a scan that
+    does not reach one linewidth beyond the resonance on both sides or
+    has fewer than 5 points inside the linewidth (as in
+    `fit_resonance_transmission`); and, with sigma, data the model does
+    not describe (for example a doublet, see `fit_split_resonance`, or
+    a dip bent by heating).
+
+    Not modeled: a second, parasitic light path that interferes with
+    the resonance (it tilts and moves the circle; the chi-square test
+    is then the warning), a doublet and a thermally bent dip.
+    """
+    f = np.asarray(f_hz, dtype=float).ravel()
+    T = np.asarray(transmission)
+    if not np.iscomplexobj(T):
+        raise ValueError(
+            "transmission must be complex (amplitude and phase); for "
+            "power data use fit_resonance_transmission")
+    T = T.astype(complex).ravel()
+    if f.shape != T.shape:
+        raise ValueError("f_hz and transmission must have the same length")
+    n_par = 6 if fit_delay else 5
+    if f.size < 8:
+        raise ValueError("need at least 8 points across the resonance")
+    if not (np.all(np.isfinite(f)) and np.all(np.isfinite(T))):
+        raise ValueError("frequencies and transmission must be finite")
+    if np.unique(f).size != f.size:
+        raise ValueError("the scan frequencies must be distinct")
+    if sigma is None:
+        w = np.ones(f.size)
+    else:
+        sig = np.broadcast_to(np.asarray(sigma, dtype=float), f.shape)
+        if not (np.all(np.isfinite(sig)) and np.all(sig > 0.0)):
+            raise ValueError("sigma must be finite and positive")
+        w = 1.0 / sig
+    pmin = float(min_p_value)
+    if not (0.0 <= pmin < 1.0):
+        raise ValueError("min_p_value must lie in [0, 1)")
+
+    fc = 0.5 * (f.min() + f.max())
+    span = float(f.max() - f.min())
+    u = (f - fc) / span
+    tscale = float(np.max(np.abs(T)))
+    if not tscale > 0.0:
+        raise ValueError("the transmission is zero everywhere")
+    y = T / tscale
+    ws = np.concatenate([w, w]) * tscale
+
+    # starting values in two steps. (1) A fit of the power |y|^2 with
+    # the single-dip model gives the center, the width and the depth
+    # D = 4 eta (1 - eta), hence the two candidates eta = (1 -/+
+    # sqrt(1 - D)) / 2. (2) For each candidate and each phase
+    # convention, dividing y by the resonance factor leaves
+    # a exp(i (phi + tau (u - u0))): the level, and the phase and delay
+    # from a straight-line fit to its unwrapped phase (weighted by the
+    # size of the factor, which is small on resonance). The full fit
+    # then starts from all four.
+    order = np.argsort(u)
+    u_s, y_s = u[order], y[order]
+    p2 = np.abs(y_s) ** 2
+    b0 = float(np.percentile(p2, 90))
+    i0 = int(np.argmin(p2))
+    D0 = float(np.clip(1.0 - p2[i0] / b0, 0.05, 0.95)) if b0 > 0 else 0.5
+    below = u_s[p2 < b0 * (1.0 - 0.5 * D0)]
+    w0 = float(below.max() - below.min()) if below.size > 1 else 0.0
+    w0 = max(w0, 3.0 / f.size)
+    rp = least_squares(lambda q: _dip(q, u_s, False) - p2,
+                       [u_s[i0], w0, D0, b0],
+                       bounds=([-1.0, 1e-9, 0.0, 0.0], [1.0, 10.0, 1.0, np.inf]),
+                       x_scale="jac")
+    u0, w0, D_p = float(rp.x[0]), float(rp.x[1]), float(rp.x[2])
+    root = np.sqrt(max(1.0 - D_p, 0.0))
+    etas0 = sorted({float(np.clip(0.5 * (1.0 - root), 1e-3, 1.0 - 1e-3)),
+                    float(np.clip(0.5 * (1.0 + root), 1e-3, 1.0 - 1e-3))})
+
+    def resid(p, s):
+        d = _complex_dip(p, u, s, fit_delay) - y
+        return ws * np.concatenate([d.real, d.imag])
+
+    lo = [-1.0, 1e-9, 0.0, 0.0, -np.inf] + ([-np.inf] if fit_delay else [])
+    hi = [1.0, 10.0, 1.0, np.inf, np.inf] + ([np.inf] if fit_delay else [])
+    best, best_s = None, None
+    for s in (1.0, -1.0):
+        for e0 in etas0:
+            fac = 1.0 - 2.0 * e0 / (1.0 - 1j * s * 2.0 * (u_s - u0) / w0)
+            q = y_s / fac
+            wt = np.abs(fac)
+            a0 = float(np.sum(wt * np.abs(q)) / np.sum(wt))
+            if fit_delay:
+                ph = np.unwrap(np.angle(q))
+                tau0, phi0 = np.polyfit(u_s - u0, ph, 1, w=wt)
+            else:
+                tau0, phi0 = 0.0, float(np.angle(np.sum(wt * q)))
+            x0 = [u0, w0, e0, a0, float(phi0)] \
+                + ([float(tau0)] if fit_delay else [])
+            x0 = np.clip(x0, lo, hi)
+            r = least_squares(resid, x0, args=(s,), bounds=(lo, hi),
+                              x_scale="jac", xtol=1e-15, ftol=1e-15,
+                              gtol=1e-15)
+            if r.success and (best is None or r.cost < best.cost):
+                best, best_s = r, s
+    if best is None:
+        raise RuntimeError("complex transmission fit failed from every "
+                           "start")
+    p = best.x
+    J = best.jac
+    dof = 2 * f.size - n_par
+    try:
+        cov = np.linalg.inv(J.T @ J)
+    except np.linalg.LinAlgError:
+        raise ValueError("the scan does not determine the resonance "
+                         "(singular information matrix)") from None
+    rss = float(2.0 * best.cost)
+    chi2 = chi2_dof = p_value = None
+    if sigma is None:
+        cov = cov * (rss / dof)
+    else:
+        chi2, chi2_dof = rss, dof
+        p_value = float(_chi2.sf(rss, dof))
+    scale = np.array([span, span, 1.0, tscale, 1.0]
+                     + ([1.0 / (2.0 * np.pi * span)] if fit_delay else []))
+    cov_phys = cov * np.outer(scale, scale)
+    sd = np.sqrt(np.abs(np.diag(cov_phys)))
+
+    f0 = fc + p[0] * span
+    kap = p[1] * span
+    eta = float(p[2])
+    s_eta = float(sd[2])
+    if not eta > 5.0 * s_eta:
+        raise ValueError(
+            f"no resolved resonance: eta = {eta:.3g} +/- {s_eta:.2g} is "
+            "not significantly above zero")
+    if not (f.min() <= f0 - kap and f.max() >= f0 + kap):
+        raise ValueError(
+            f"the scan ({f.min():.6g} to {f.max():.6g} Hz) does not reach "
+            f"one linewidth ({kap:.4g} Hz) beyond the resonance at "
+            f"{f0:.6g} Hz on both sides; the off-resonance level would be "
+            "extrapolated. Widen the sweep")
+    inside = int(np.sum(np.abs(f - f0) <= 0.5 * kap))
+    if inside < 5:
+        raise ValueError(
+            f"only {inside} points lie inside the linewidth ({kap:.4g} "
+            "Hz); the width is not resolved. Use a finer sweep")
+    if p_value is not None and p_value < pmin:
+        raise ValueError(
+            f"one resonance on the bus does not describe these data "
+            f"(chi^2 = {chi2:.4g} for {chi2_dof} degrees of freedom, "
+            f"p = {p_value:.2g}): a doublet, a dip distorted by heating, "
+            "a parasitic light path, or underestimated errors")
+
+    z = (eta - 0.5) / s_eta if s_eta > 0 else np.inf * np.sign(eta - 0.5)
+    regime = "critical" if abs(z) <= 3.0 else ("over" if z > 0 else "under")
+    c_kk, c_ke, c_ee = cov_phys[1, 1], cov_phys[1, 2], cov_phys[2, 2]
+    sig_out = {"f0_hz": float(sd[0]), "kappa_hz": float(sd[1]),
+               "eta_esc": s_eta, "amplitude": float(sd[3]),
+               "phase_rad": float(sd[4])}
+    for key, g_k, g_e in (("kappa_ex_hz", eta, kap),
+                          ("kappa_0_hz", 1.0 - eta, -kap)):
+        var = g_k * g_k * c_kk + 2.0 * g_k * g_e * c_ke + g_e * g_e * c_ee
+        sig_out[key] = float(np.sqrt(max(var, 0.0)))
+    out = {"f0_hz": float(f0), "kappa_hz": float(kap), "eta_esc": eta,
+           "kappa_ex_hz": float(eta * kap),
+           "kappa_0_hz": float((1.0 - eta) * kap),
+           "regime": regime, "regime_z": float(z),
+           "amplitude": float(p[3] * tscale),
+           "phase_rad": float(np.angle(np.exp(1j * p[4]))),
+           "delay_s": float(p[5] / (2.0 * np.pi * span)) if fit_delay
+           else 0.0,
+           "conjugate": bool(best_s < 0),
+           "sigma": sig_out, "covariance": cov_phys,
+           "chi2": chi2, "chi2_dof": chi2_dof, "p_value": p_value,
+           "model": _complex_dip(p, u, best_s, fit_delay) * tscale}
+    if fit_delay:
+        sig_out["delay_s"] = float(sd[5])
     return out

@@ -67,8 +67,9 @@ import math
 import numpy as np
 
 from .linearize import fluctuation_matrix
-from .spectra import (_bath_diagonal, _check_spectra_stability,
-                      _port_indices, _variance_from_rows)
+from .spectra import (_bath_diagonal, _check_damping,
+                      _check_spectra_stability, _port_indices,
+                      _variance_from_rows)
 
 
 def photonic_molecule(mu, J, delta_a=0.0, delta_b=0.0, gamma=1.0):
@@ -129,6 +130,13 @@ def output_variance_ports(M, gammas, eta: float, port_mode, omega: float,
     Fixed in 0.16: close to threshold the variance lost its accuracy
     and could come out negative, as in `output_quadrature_variance`;
     it is now summed from the rows of the transfer matrices.
+    Fixed in 0.18: gammas must be the decay rates that M itself damps
+    (the Hermitian part of each diagonal block of M equal to
+    -diag(gammas)), finite and >= 0. Up to 0.17.0 a mismatch gave a
+    wrong number without an error: `photonic_molecule(0, 1, gamma=9)`
+    read through `gammas=[1, 1]` gave 0.34 at omega = 0, an apparent
+    -1.67 dB of squeezing from a passive pair of rings (0.5 with the
+    right gammas), and a negative rate gave NaN.
     """
     M, gammas, eta, ports, reads = _check_ports(
         M, gammas, eta, port_mode, mode_index, n_th_port, n_th_loss,
@@ -151,6 +159,7 @@ def _check_ports(M, gammas, eta, port_mode, mode_index, n_th_port,
     if M.shape != (2 * n, 2 * n):
         raise ValueError("M and gammas disagree on the number of modes")
     _check_spectra_stability(M, allow_marginal)
+    _check_damping(M, gammas)
     ports, reads = _port_indices(port_mode, mode_index, n)
     return M, gammas, eta, ports, reads
 

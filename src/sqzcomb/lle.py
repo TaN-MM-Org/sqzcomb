@@ -92,7 +92,28 @@ def lle_evolve(psi0, F, alpha, dispersion=(0.0,), t_end=50.0, dt=0.01,
     d1 : drift between pump pulses and the ring's round trip (see the
         module docstring); 0 for a continuous-wave pump.
     t0 : starting time, used only to evaluate a callable F(t).
+
+    dt is the largest step taken. Fixed in 0.18: the evolution ends at
+    t_end exactly. When t_end is not a whole number of steps dt, the
+    step is shortened to t_end / ceil(t_end / dt); a t_end that is a
+    whole number of steps (to a relative 1e-9) keeps dt unchanged, so
+    those results are the same as before. Up to 0.17.0 the loop ran
+    round(t_end / dt) steps of dt and stopped early or late without a
+    word: t_end = 0.25 with dt = 0.1 stopped at 0.2, and t_end = 0.04
+    with dt = 0.1 returned psi0 unchanged. dt must be positive and
+    t_end non-negative (a negative dt used to return psi0 as well).
     """
+    t_end = float(t_end)
+    dt = float(dt)
+    if not (np.isfinite(dt) and dt > 0.0):
+        raise ValueError("dt must be finite and positive")
+    if not (np.isfinite(t_end) and t_end >= 0.0):
+        raise ValueError("t_end must be finite and >= 0")
+    steps = int(round(t_end / dt))
+    if abs(steps * dt - t_end) > 1e-9 * t_end:
+        # not a whole number of steps: shorten the step to end at t_end
+        steps = int(math.ceil(t_end / dt))
+        dt = t_end / steps
     psi = np.asarray(psi0, dtype=complex).copy()
     n = psi.size
     k = np.fft.fftfreq(n, d=1.0 / n)  # integer mode numbers
@@ -104,7 +125,6 @@ def lle_evolve(psi0, F, alpha, dispersion=(0.0,), t_end=50.0, dt=0.01,
     timed = callable(F)
     if not timed:
         Fk = pump_spectrum(F, n)
-    steps = int(round(t_end / dt))
     for step in range(steps):
         if timed:   # pump held at its mid-step value
             Fk = pump_spectrum(F(float(t0) + (step + 0.5) * dt), n)

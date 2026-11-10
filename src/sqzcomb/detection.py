@@ -383,6 +383,10 @@ def max_phase_noise(target_variance, v_squeezed, v_antisqueezed,
     eta = _check_eta(efficiency)
     dark = _check_dark(dark_noise)
     Vt = float(target_variance)
+    if not np.isfinite(Vt):
+        # fixed in 0.18: a NaN target passed both range checks below
+        # and came back as a NaN jitter, without an error
+        raise ValueError("target_variance must be finite")
     if dark_in_reference:
         eta_e = dark_equivalent_efficiency(dark)
         Vt = (Vt - (1.0 - eta_e) * VACUUM_VARIANCE) / eta_e

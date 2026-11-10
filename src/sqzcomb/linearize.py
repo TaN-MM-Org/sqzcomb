@@ -28,13 +28,21 @@ def fluctuation_matrix(psi_s, alpha: float, dispersion=(0.0,), modes=None,
         modes). d1 : pump-pulse drift term of `lle_evolve` (0 for a
         continuous-wave pump); the pump itself never enters M.
     Returns (M, modes_array).
+
+    Refused since 0.18 (fixed: up to 0.17.0 these were accepted
+    without an error): a mode number that is not an integer (0.6 was
+    cut to 0) and a mode listed twice. A repeated mode was kept as two
+    copies coupled to each other, which doubled its Kerr coupling: for
+    the flat state of README example 3 (F = 0.9, alpha = 0.3) at
+    eta = 0.8, modes=[0, 0] read -1.279 dB at the best angle instead of
+    the -4.194 dB of modes=[0].
     """
     psi_s = np.asarray(psi_s, dtype=complex)
     n = psi_s.size
     kgrid = np.fft.fftfreq(n, d=1.0 / n).astype(int)
     if modes is None:
         modes = kgrid.copy()
-    modes = np.asarray(list(modes), dtype=int)
+    modes = _check_mode_numbers(modes)
     m = modes.size
 
     f_abs2 = np.fft.fft(np.abs(psi_s) ** 2) / n     # components of |psi_s|^2
@@ -53,6 +61,27 @@ def fluctuation_matrix(psi_s, alpha: float, dispersion=(0.0,), modes=None,
     B += 1j * _grid_components(f_sq, kgrid, modes[:, None] + modes[None, :])
     M = np.block([[A, B], [np.conj(B), np.conj(A)]])
     return M, modes
+
+
+def _check_mode_numbers(modes):
+    """The retained mode numbers as an int array: at least one, each an
+    integer, none repeated (new in 0.18)."""
+    raw = np.asarray(list(modes))
+    if raw.ndim != 1 or raw.size == 0:
+        raise ValueError("modes must be a non-empty list of mode numbers")
+    vals = raw.astype(float)
+    if not (np.all(np.isfinite(vals)) and np.all(np.mod(vals, 1.0) == 0.0)):
+        raise ValueError(f"mode numbers must be integers (got "
+                         f"{raw.tolist()!r})")
+    out = vals.astype(int)
+    uniq, counts = np.unique(out, return_counts=True)
+    if np.any(counts > 1):
+        raise ValueError(
+            f"mode {int(uniq[np.argmax(counts > 1)])} is listed more than "
+            "once; each comb line can be kept only once (a repeated line "
+            "used to be kept as two coupled copies, which doubled its "
+            "Kerr coupling)")
+    return out
 
 
 def _grid_components(f, kgrid, k):

@@ -47,6 +47,53 @@ def _check_spectra_stability(M, allow_marginal, tol=1e-6):
                      "linearized spectra are meaningless there")
 
 
+def _check_damping(M, gammas=None):
+    """Each mode's damping in M must equal its decay rate (new in 0.18).
+
+    The input-output relations of this package couple every mode j to
+    its port and loss baths with amplitudes sqrt(2 eta gamma_j) and
+    sqrt(2 (1 - eta) gamma_j), a total decay rate gamma_j, and they
+    conserve vacuum only when M damps that mode at the same rate: the
+    Hermitian part of each diagonal block of the doubled M must be
+    -diag(gamma),
+    gamma = 1 for the single-ring functions (rates in units of kappa/2)
+    or `gammas` for the port functions. A coherent coupling (-i J), a
+    detuning or a Kerr term is anti-Hermitian and does not enter. Up to
+    0.17.0 a mismatch gave a wrong number without an error: a passive
+    mode with damping 0.5 emitted 4.5 instead of the vacuum level 0.5,
+    and a passive molecule with gamma = 9 read through `gammas=[1, 1]`
+    gave 0.34, an apparent -1.67 dB of squeezing from no pump at all.
+    """
+    M = np.asarray(M)
+    n = M.shape[0] // 2
+    g = np.ones(n) if gammas is None else np.asarray(gammas, dtype=float)
+    if not np.all(np.isfinite(M)):
+        raise ValueError("the drift matrix holds a non-finite value")
+    if not (np.all(np.isfinite(g)) and np.all(g >= 0.0)):
+        raise ValueError("decay rates (gammas) must be finite and >= 0")
+    scale = max(1.0, float(np.max(np.abs(M))))
+    for blk in (M[:n, :n], M[n:, n:]):
+        herm = 0.5 * (blk + blk.conj().T)
+        err = float(np.max(np.abs(herm + np.diag(g))))
+        if not err <= 1e-9 * scale:
+            if gammas is None:
+                raise ValueError(
+                    "the drift matrix does not damp every mode at rate 1 "
+                    "(the Hermitian part of its diagonal blocks is not "
+                    "-I): these formulas take each mode's decay as 1 in "
+                    "units of kappa/2, and with any other damping a "
+                    "passive mode would not even emit vacuum. For modes "
+                    "with other decay rates use output_variance_ports "
+                    "with their gammas")
+            raise ValueError(
+                "gammas do not match the damping of the drift matrix (the "
+                "Hermitian part of its diagonal blocks must be "
+                "-diag(gammas)): the bath couplings are built from "
+                "gammas, so with a mismatch even a passive system would "
+                "not emit vacuum. Pass the gammas the model builder "
+                "returned")
+
+
 def _check_eta_port(eta):
     """Escape fraction of a port: a number in [0, 1] (0: no port, the
     output is the reflected input). Values outside made the square
@@ -226,6 +273,16 @@ def output_quadrature_variance(M, eta: float, omega: float,
     the squeezed one: `single_mode_parametric(0.9999)` at eta = 1,
     omega = 0, phi = pi/2 gave -2.1e-8 (a negative variance) instead of
     1.25e-9. Elsewhere the two agree to rounding.
+
+    Fixed in 0.18: M must damp every mode at rate 1 (the Hermitian part
+    of each diagonal block equal to -I; see `_check_damping`), the
+    decay these formulas assume, or the call is refused. Up to 0.17.0 a
+    passive mode with damping 0.5 (e.g. from `drift_from_qutip(H,
+    [0.5])`) gave 4.5 at omega = 0 and eta = 1 instead of the vacuum
+    level 0.5. Modes with other decay rates belong in
+    `output_variance_ports`, which takes them as `gammas`. The same
+    check applies to `output_covariance_xxpp`, `optimal_quadrature`,
+    `optimal_band_quadrature` and the output-entanglement functions.
     """
     eta = _check_quadrature_inputs(M, eta, mode_index, n_modes,
                                    mode_index_b, n_th_port, n_th_loss,
@@ -246,6 +303,7 @@ def _check_quadrature_inputs(M, eta, mode_index, n_modes, mode_index_b,
         raise ValueError("mode_index_b must differ from mode_index: the "
                          "joint quadrature needs two different modes")
     _check_spectra_stability(M, allow_marginal)
+    _check_damping(M)
     return eta
 
 
@@ -273,6 +331,7 @@ def output_covariance_xxpp(M, eta, omega, n_modes, n_th_port=0.0,
     eta = _check_eta_port(eta)
     _check_modes(M, n_modes, ())
     _check_spectra_stability(M, allow_marginal)
+    _check_damping(M)
     S = _output_covariance(M, eta, omega, n_th_port, n_th_loss)
     n = n_modes
     eye = np.eye(n)
@@ -474,7 +533,8 @@ def _angle_function(M, eta, ws, mode_index, n_modes, mode_index_b,
 def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
                             weights=None, mode_index_b=None,
                             n_th_port: float = 0.0, n_th_loss: float = 0.0,
-                            allow_marginal: bool = False) -> dict:
+                            allow_marginal: bool = False,
+                            goal: str = "mean") -> dict:
     """The best single local-oscillator angle for a band of frequencies.
 
     In an experiment the local oscillator usually sits at one angle
@@ -498,24 +558,54 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
     omegas : the analysis frequencies of the band (units of kappa/2;
         convert Hz with `normalized_frequency`); 1-D, finite.
     weights : None (equal weights) or one finite value >= 0 per
-        frequency, not all zero.
+        frequency, not all zero. They enter the band average only.
+    goal (new in 0.18) : what "best" means for the fixed angle.
+        "mean" (default, as before): the lowest band average V_band.
+        "worst": the best worst case, the angle at which the least
+            squeezed frequency of the band is as squeezed as possible
+            (it minimizes max_k V(phi, omega_k), and so the largest
+            squeezing_db).
+        "penalty": the angle at which the largest shortfall from each
+            frequency's own best angle is as small as possible (it
+            minimizes max_k penalty_db).
+        Both worst-case goals are solved exactly, without a scan: as a
+        function of t = 2 phi each V(phi, omega_k), divided by its
+        reference (0.5 for "worst", the per-frequency optimum v_opt for
+        "penalty"), is c0 + c1 cos t + c2 sin t, and the largest of
+        such curves is lowest either at the minimum of one of them or
+        where two of them cross. Those angles are found in closed form
+        (a crossing solves c0 + c1 cos t + c2 sin t = 0 for the
+        difference of two curves) and the best one is kept. The cost
+        grows as the cube of the number of frequencies (0.7 s for 400
+        on one test machine). Every frequency counts in the worst case,
+        whatever its weight.
 
     Returns a dict:
-        phi : the best fixed angle, in [0, pi);
+        phi : the best fixed angle for the goal, in [0, pi);
         v_band, squeezing_db_band : the band average at phi (variance,
             vacuum 0.5) and in dB;
         v, squeezing_db : the variance and dB at phi at every frequency;
         v_opt, phi_opt : the per-frequency optimum of
             `optimal_quadrature`, for comparison;
         penalty_db : squeezing_db - 10 log10(v_opt / 0.5) at every
-            frequency (>= 0): what holding the angle fixed costs there.
+            frequency (>= 0): what holding the angle fixed costs there;
+        worst_db, worst_penalty_db (new in 0.18) : the largest
+            squeezing_db and the largest penalty_db over the band at
+            phi; goal : the goal used.
     The angle is meaningless when the band average does not depend on
     it (phase-insensitive light); `quadrature_extremes` notes the same.
+    The values at phi are evaluated there exactly (as in
+    `optimal_quadrature`); for the worst-case goals the angle itself is
+    chosen from the harmonics c0, c1, c2, which near threshold carry
+    the rounding error described in `quadrature_extremes`.
 
     For the photonic molecule's ports, the same answer comes from
     ``quadrature_extremes(lambda p: np.average([output_variance_ports(
     M, g, eta, port, w, phi=p) for w in omegas], weights=weights))``.
     """
+    if goal not in ("mean", "worst", "penalty"):
+        raise ValueError(f"goal must be 'mean', 'worst' or 'penalty' "
+                         f"(got {goal!r})")
     ws = np.asarray(omegas, dtype=float)
     if ws.ndim != 1 or ws.size == 0 or not np.all(np.isfinite(ws)):
         raise ValueError("omegas must be a non-empty 1-D array of finite "
@@ -542,14 +632,66 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
         return cache[p]
 
     per = _extremes_per_frequency(cached, var_k, ws.size)
-    # scalar: quadrature_extremes evaluates the band average at its
-    # best angle (since 0.16), so v_band is the average of v below
-    band = quadrature_extremes(
-        lambda p: float(np.dot(wt, cached(p)) / np.sum(wt)))
-    phi = band["phi_min"]
+    if goal == "mean":
+        # scalar: quadrature_extremes evaluates the band average at its
+        # best angle (since 0.16), so v_band is the average of v below
+        band = quadrature_extremes(
+            lambda p: float(np.dot(wt, cached(p)) / np.sum(wt)))
+        phi = band["phi_min"]
+        v_band = band["v_min"]
+    else:
+        # the same three evaluations quadrature_extremes used (cached)
+        v0, v45, v90 = cached(0.0), cached(np.pi / 4), cached(np.pi / 2)
+        c0 = 0.5 * (v0 + v90)
+        ref = np.full(ws.size, 0.5) if goal == "worst" else per["v_min"]
+        if not np.all(ref > 0.0):
+            raise ValueError("a per-frequency optimum is not positive; "
+                             "the penalty is not defined")
+        phi = _minimax_angle(c0, 0.5 * (v0 - v90), v45 - c0, ref)
+        v_band = float(np.dot(wt, cached(phi)) / np.sum(wt))
     v = cached(phi)
-    return {"phi": phi, "v_band": band["v_min"],
-            "squeezing_db_band": float(squeezing_db(band["v_min"])),
-            "v": v, "squeezing_db": squeezing_db(v),
+    sq = squeezing_db(v)
+    pen = sq - squeezing_db(per["v_min"])
+    return {"phi": phi, "v_band": v_band,
+            "squeezing_db_band": float(squeezing_db(v_band)),
+            "v": v, "squeezing_db": sq,
             "v_opt": per["v_min"], "phi_opt": per["phi_min"],
-            "penalty_db": squeezing_db(v) - squeezing_db(per["v_min"])}
+            "penalty_db": pen, "worst_db": float(np.max(sq)),
+            "worst_penalty_db": float(np.max(pen)), "goal": goal}
+
+
+def _minimax_angle(c0, c1, c2, ref):
+    """The angle phi in [0, pi) that minimizes max_k g_k(2 phi) with
+    g_k(t) = (c0_k + c1_k cos t + c2_k sin t) / ref_k, exactly (new in
+    0.18; see `optimal_band_quadrature`).
+
+    Where the largest curve is lowest, either one curve is the largest
+    and sits at its own minimum (t = atan2(-c2, -c1)), or two curves
+    are equal there: d0 + d1 cos t + d2 sin t = 0 for their difference,
+    t = atan2(d2, d1) +/- arccos(-d0 / hypot(d1, d2)). Every such angle
+    is a candidate; the envelope is evaluated at all of them (in chunks)
+    and the lowest is returned. t = 0 is added so that the list is never
+    empty (all curves flat)."""
+    a0, a1, a2 = (np.asarray(c, dtype=float) / ref for c in (c0, c1, c2))
+    k = a0.size
+    cands = [np.zeros(1)]
+    r = np.hypot(a1, a2)
+    cands.append(np.arctan2(-a2, -a1)[r > 0.0])
+    i, j = np.triu_indices(k, 1)
+    d0, d1, d2 = a0[i] - a0[j], a1[i] - a1[j], a2[i] - a2[j]
+    rr = np.hypot(d1, d2)
+    ok = (rr > 0.0) & (np.abs(d0) <= rr)
+    base = np.arctan2(d2[ok], d1[ok])
+    off = np.arccos(np.clip(-d0[ok] / rr[ok], -1.0, 1.0))
+    cands += [base + off, base - off]
+    th = np.concatenate(cands)
+    best_val, best_t = np.inf, 0.0
+    chunk = max(1, 2_000_000 // k)
+    for s0 in range(0, th.size, chunk):
+        t = th[s0:s0 + chunk]
+        env = np.max(a0[:, None] + a1[:, None] * np.cos(t)[None, :]
+                     + a2[:, None] * np.sin(t)[None, :], axis=0)
+        m = int(np.argmin(env))
+        if env[m] < best_val:
+            best_val, best_t = float(env[m]), float(t[m])
+    return float(np.mod(0.5 * best_t, np.pi))

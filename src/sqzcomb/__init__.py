@@ -60,10 +60,12 @@ from .technical import (classical_noise_variance,
                         pump_noise_drive, resonance_noise_drive)
 from .pulsed import (covariance_evolution, parametric_pulse_drift,
                      temporal_mode_variance)
-from .resonance import (fit_resonance_transmission, fit_split_resonance,
-                        split_transmission, through_transmission)
+from .resonance import (fit_complex_transmission,
+                        fit_resonance_transmission, fit_split_resonance,
+                        split_transmission, through_amplitude,
+                        through_transmission)
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -112,4 +114,6 @@ __all__ = [
     "gain_for_squeezing",
     # new in 0.17
     "fit_squeezing_pairs", "fit_split_resonance", "split_transmission",
+    # new in 0.18
+    "through_amplitude", "fit_complex_transmission",
 ]

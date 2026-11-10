@@ -52,7 +52,7 @@ def _diffusion(gammas, n_th=0.0):
     return D
 
 
-def intracavity_covariance(M, gammas, n_th=0.0):
+def intracavity_covariance(M, gammas, n_th=0.0, allow_marginal=False):
     """Steady-state complex covariance V = <z z^dag> of the doubled basis.
 
     Solves M V + V M^dag + D = 0 with the bath diffusion matrix
@@ -64,18 +64,51 @@ def intracavity_covariance(M, gammas, n_th=0.0):
     the open left half-plane); raises ValueError otherwise, for the same
     reason the spectra do: the linearized state does not exist above
     threshold.
+
+    Refused since 0.18 (fixed: up to 0.17.0 these gave a number without
+    an error):
+
+    * a marginally stable M, whose largest growth rate lies within 1e-6
+      of zero (the tolerance of the spectra), unless
+      allow_marginal=True. Around a soliton this is the free
+      translation (Goldstone) mode, along which the steady covariance
+      is infinite; the solve then returned whatever rounding made of
+      it (entries of 1.5e14 for a soliton whose growth rate came out
+      as -5e-14). Pass allow_marginal=True only for a state that is
+      genuinely stable this close to threshold; a growth rate >= 0 is
+      refused regardless.
+    * gammas that are not the decay rates M damps (the Hermitian part
+      of each diagonal block of M must be -diag(gammas)), or that are
+      negative or not finite: the diffusion matrix D would then not
+      match the damping, and even vacuum would come out wrong.
     """
+    from .spectra import _check_damping
     M = np.asarray(M, dtype=complex)
     m2 = M.shape[0]
     if M.shape != (m2, m2) or m2 % 2:
         raise ValueError("M must be a square doubled (2n x 2n) matrix")
-    if np.max(np.linalg.eigvals(M).real) >= 0.0:
-        raise ValueError("drift matrix is unstable (above threshold); "
-                         "no steady covariance exists there")
     n = m2 // 2
     gammas = np.asarray(gammas, dtype=float)
     if gammas.shape != (n,):
         raise ValueError("gammas must have one decay rate per mode")
+    lam = float(np.max(np.linalg.eigvals(M).real))
+    if lam >= 1e-6:
+        raise ValueError("drift matrix is unstable (above threshold); "
+                         "no steady covariance exists there")
+    if lam > -1e-6 and (lam >= 0.0 or not allow_marginal):
+        # within 1e-6 of zero: marginal, whichever sign rounding gave
+        # (a soliton's translation mode comes out as +/- 1e-14)
+        raise ValueError(
+            f"drift matrix is marginally stable (largest growth rate "
+            f"{lam:.3g}, within 1e-6 of zero): the steady covariance "
+            "diverges along that direction (around a soliton, its free "
+            "translation), and the number computed would be set by "
+            "rounding. Spectra at omega != 0 stay finite (see "
+            "allow_marginal in output_quadrature_variance); pass "
+            "allow_marginal=True here only for a state that is genuinely "
+            "stable this close to threshold (a growth rate >= 0 is "
+            "refused regardless)")
+    _check_damping(M, gammas)
     D = _diffusion(gammas, n_th)
     ident = np.eye(m2, dtype=complex)
     # row-major vec: vec(M V) = (M kron I) vec(V); vec(V M^dag) =
