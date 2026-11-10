@@ -1,5 +1,134 @@
 # Changelog
 
+## 0.18.0 (2026-11-10)
+
+The escape efficiency and the coupling regime from the phase of a
+transmission scan, the fixed local-oscillator angle with the best worst
+case over a band, five inputs that gave a wrong answer without an error,
+and a CI runner that still has Python 3.9.
+
+### Fixed
+
+- A drift matrix whose damping was not the decay rate the input-output
+  relations use gave a wrong number without an error. The single-ring
+  functions couple every mode to its port and loss baths with a total
+  decay rate of 1 (in units of kappa/2), and the port functions with
+  the rates `gammas`; vacuum comes out right only when M damps each
+  mode at that same rate (the Hermitian part of each diagonal block of
+  M equal to -I, or to -diag(gammas)). A passive mode with damping 0.5
+  (for example from `drift_from_qutip(H, [0.5])`) gave 4.500 instead of
+  the vacuum level 0.5 through `output_quadrature_variance` (`eta = 1`,
+  `omega = 0`);
+  the passive molecule `photonic_molecule(0, 1, gamma=9)` read through
+  `output_variance_ports` with `gammas=[1, 1]` gave 0.340, an apparent
+  -1.67 dB of squeezing with no pump at all, instead of 0.500;
+  `gammas=[1, -9]` gave NaN; and `intracavity_covariance` with
+  `gammas=[1, 1]` gave `<a a^dag>` = 0.92 and 0.12 for that passive
+  (vacuum) state instead of 1 and 1, i.e. negative photon numbers. Such
+  inputs are now refused, by `output_quadrature_variance`,
+  `output_covariance_xxpp`, `optimal_quadrature`,
+  `optimal_band_quadrature`, the output-entanglement functions,
+  `output_variance_ports`, `intracavity_covariance`,
+  `covariance_evolution` and `temporal_mode_variance` (the drift
+  matrices the package builds pass, with the decay rates they come
+  with). The classical-noise functions are unchanged: their added
+  variance is a linear response that does not rely on this balance.
+  Tests:
+  `test_single_ring_functions_refuse_a_damping_other_than_one`,
+  `test_port_functions_refuse_gammas_that_do_not_match_m`,
+  `test_intracavity_and_pulsed_refuse_mismatched_gammas`.
+- `intracavity_covariance` accepted a marginally stable drift matrix.
+  Around a soliton the translation mode has a growth rate of exactly
+  zero, and the steady covariance is infinite along it; where rounding
+  put that rate just below zero (-5.1e-14 for the soliton with
+  `F = 1.9`, `alpha = 3`, `d2 = -4` on 48 points) the solve returned
+  entries up to 1.5e14, set by rounding. A largest growth rate within
+  1e-6 of zero is now refused as marginal (the tolerance of the
+  spectra), unless `allow_marginal=True` (new argument) says the state
+  is genuinely stable this close to threshold; a rate of zero or more
+  is refused regardless. Calls within 1e-6 of threshold, which were
+  right before, now need that flag and then give the same numbers:
+  `single_mode_parametric(1 - 5e-7)` gives the antisqueezed variance
+  1.0000000000839e6 against the closed form `1 / (2 (1 - mu))` = 1e6.
+  Test: `test_intracavity_covariance_refuses_a_marginal_drift_matrix`.
+- `lle_evolve` ran `round(t_end / dt)` steps of `dt` and so stopped
+  early or late. For a flat field without pump (`F = 0`, `alpha = 0.3`,
+  `|psi0| = 1e-3`), where `|psi(t)| = |psi0| e^{-t}` exactly,
+  `t_end = 0.25` with `dt = 0.1` gave 8.187e-4 (the value at
+  `t = 0.2`) instead of 7.788e-4, and `t_end = 0.04` with `dt = 0.1`
+  returned `psi0` unchanged (1.000e-3 instead of 9.608e-4). The step is
+  now shortened to `t_end / ceil(t_end / dt)` when `t_end` is not a
+  whole number of steps; when it is (to a relative 1e-9), `dt` is kept
+  and the result is the same as before, bit for bit. A step `dt <= 0`
+  (a negative one returned `psi0`) and a negative or infinite `t_end`
+  are refused. Test: `test_lle_evolve_ends_at_t_end`.
+- `fluctuation_matrix` (and through it `molecule_fluctuation_matrix`
+  and `vernier_molecule_fluctuation_matrix`) accepted a mode listed
+  twice and kept it as two copies coupled to each other, which doubled
+  its Kerr coupling: for the flat state of README example 3 at
+  `eta = 0.8`, `modes=[0, 0]` read -1.279 dB at the best angle instead
+  of the -4.194 dB of `modes=[0]`. A fractional mode number was cut to
+  an integer (`modes=[0, 0.6]` was `[0, 0]`, the same wrong answer).
+  Both are now refused, as is an empty list. Test:
+  `test_fluctuation_matrix_refuses_repeated_and_fractional_modes`.
+- `max_phase_noise` returned NaN for a NaN target instead of an error.
+  Test: `test_max_phase_noise_refuses_a_nan_target`.
+
+### Added
+
+- `fit_complex_transmission(f_hz, transmission, sigma=None,
+  fit_delay=True)` and `through_amplitude(...)`: the loaded linewidth,
+  the escape efficiency and the coupling regime from a scan of the
+  complex through-port transmission (amplitude and phase). The power
+  transmission cannot tell an over-coupled ring from an under-coupled
+  one (`eta` and `1 - eta` give the same dip); the complex transmission
+  traces a circle of radius `eta` around `1 - eta` that holds the
+  origin only when `eta > 1/2`, so the fit returns one `eta` with one
+  error bar, `regime` ("over", "under", or "critical" within 3 sigma of
+  1/2), `kappa_ex`, `kappa_0`, and allows for an unknown level, phase
+  and delay of the setup and either phase convention of the instrument.
+  Checked against the through-port amplitude built from the package's
+  drift matrix and resolvent (relative 1e-14), the circle identity
+  (1e-14), noise-free recovery in both phase conventions for five
+  efficiencies including critical coupling (relative 1e-9), the power
+  fit of the same noisy scans (it lands on the right one of the two
+  power-fit answers), and 80 seeded noisy scans for each of two
+  efficiencies (scatter between 0.91 and 1.09 times the reported error
+  bars of the efficiency, linewidth, center, `kappa_ex`, `kappa_0` and
+  delay; mean chi-square within 0.4 % of its degrees of freedom).
+  README example 26.
+- `optimal_band_quadrature(..., goal="worst")` and `goal="penalty"`:
+  the fixed local-oscillator angle with the best worst case over the
+  band, either the least squeezed frequency as squeezed as possible, or
+  the largest shortfall from each frequency's own best angle as small
+  as possible. Both are solved exactly: each variance, divided by its
+  reference, is `c0 + c1 cos 2phi + c2 sin 2phi`, and the largest of
+  such curves is lowest at the minimum of one of them or where two of
+  them cross, both found in closed form. The default `goal="mean"` is
+  unchanged; every goal now also returns `worst_db` and
+  `worst_penalty_db`. Checked against hand-solvable envelopes, a scan
+  of 200001 angles refined by a bounded minimizer on variances built
+  from `output_covariance_xxpp` (never worse; within a relative 1e-8;
+  angle within 1e-6), the optimality conditions of a minimax, and the
+  limits with one best angle. For the band of README example 20 the
+  largest shortfall drops from 0.271 dB (best average) to 0.108 dB,
+  for 0.008 dB of band average. README example 27.
+- New test files `tests/test_audit_018.py` (14 tests),
+  `tests/test_complex_resonance.py` (19) and
+  `tests/test_band_worst_case.py` (10).
+
+### Changed
+
+- CI: the test workflow runs on `ubuntu-24.04` instead of
+  `ubuntu-latest`, which is now Ubuntu 26.04 and has no Python 3.9 (so
+  every run failed). The publish workflow is unchanged.
+- `intracavity_covariance` calls a largest growth rate between 0 and
+  1e-6 marginal instead of above threshold (still refused).
+- README: examples 26 and 27, the new refusals, checks, corrections and
+  limits, a note on decay rates under "Units and conventions"; 303
+  tests (260 in 0.17.0). Examples 1 to 25 print the same as with
+  0.17.0.
+
 ## 0.17.0 (2026-10-18)
 
 Loss and phase jitter told apart from squeezing pairs at several pump

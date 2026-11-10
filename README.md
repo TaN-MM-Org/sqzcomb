@@ -22,7 +22,8 @@ It answers questions such as:
   need, with all three together?
 - At which local-oscillator angle is the light most squeezed, at each
   analysis frequency? (Found exactly, without scanning angles.) And
-  which one fixed angle is best for a whole band of frequencies?
+  which one fixed angle is best for a whole band of frequencies, on
+  average or for the worst frequency in it?
 - Can a second, coupled ring get the light out better than one ring
   alone can?
 - Are two comb lines entangled at the output, and would a detector be
@@ -37,7 +38,8 @@ It answers questions such as:
   pumped for a target squeezing, given the losses and the jitter?
 - What are the ring's linewidth and escape efficiency, from a laser
   sweep across one resonance, also when backscattering splits it into
-  a doublet?
+  a doublet? Is the ring over- or under-coupled? (The phase of the
+  transmitted light tells.)
 - Is the squeezing limited by loss or by phase jitter? (Found from
   squeezed and antisqueezed levels measured at several pump powers.)
 - What happens above threshold, or when single photons matter and the
@@ -197,17 +199,25 @@ newer. QuTiP (4.7 or newer) is needed only for `drift_from_qutip`.
   shot-noise trace taken through the same receiver carries the dark
   noise in the reference too; `dark_in_reference=True` gives that
   number (example 19).
+- **Decay rates in a drift matrix.** The single-ring functions
+  (`output_quadrature_variance` and the ones built on it) take every
+  mode to decay at rate 1, in units of `kappa/2`; the port functions
+  (`output_variance_ports`) and `intracavity_covariance` take the rate
+  of each mode as `gammas`. The damping in the drift matrix must be
+  that same rate, or even a passive mode would not return vacuum.
+  Since 0.18 a mismatch is refused. The model builders
+  (`photonic_molecule` and the others) return matching `gammas`.
 
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with sqzcomb 0.17.0. Examples 1 to 23 print the same as with
-0.16.0; examples 1 to 21 print the same as with 0.15.1, except one
-line of example 5, which 0.16.0 corrected (see
-[Corrections](#corrections)). The device and pump numbers are
-illustrative values chosen for the example, not measured data, except
-the measured pair in example 6, which is quoted from the paper named
-there.
+printed with sqzcomb 0.18.0. Examples 1 to 25 print the same as with
+0.17.0, and examples 1 to 23 the same as with 0.16.0; examples 1 to 21
+print the same as with 0.15.1, except one line of example 5, which
+0.16.0 corrected (see [Corrections](#corrections)). The device and
+pump numbers are illustrative values chosen for the example, not
+measured data, except the measured pair in example 6, which is quoted
+from the paper named there.
 
 ### 1. From lab numbers to model units
 
@@ -1327,6 +1337,105 @@ coupling that loses no light; the derivation is in the
 `sqzcomb.resonance` docstring and is checked against the package's
 two-mode drift matrix.
 
+### 26. Over- or under-coupled? The phase of the transmission
+
+```python
+import numpy as np
+from sqzcomb import (through_amplitude, fit_complex_transmission,
+                     fit_resonance_transmission)
+
+# A synthetic sweep of the complex transmission (illustrative ring:
+# kappa = 100 MHz, eta_esc = 0.8; a 3 ns delay in the setup; phase in
+# the e^{+i omega t} sign convention, conjugate=True), 0.5 % noise on
+# the real and on the imaginary part of each point.
+f = np.linspace(-300e6, 300e6, 151)
+rng = np.random.default_rng(0)
+t = through_amplitude(f, 0.0, 100e6, 0.8, amplitude=0.9, phase=1.0,
+                      delay_s=3e-9, conjugate=True)
+t = t + 0.005 * (rng.standard_normal(f.size)
+                 + 1j * rng.standard_normal(f.size))
+
+r = fit_complex_transmission(f, t, sigma=0.005)
+s = r["sigma"]
+print(f"eta_esc = {r['eta_esc']:.4f} +/- {s['eta_esc']:.4f}: "
+      f"{r['regime']}-coupled, {r['regime_z']:.0f} sigma above 1/2")
+print(f"kappa = {r['kappa_hz'] / 1e6:.2f} +/- {s['kappa_hz'] / 1e6:.2f} MHz, "
+      f"kappa_0 = {r['kappa_0_hz'] / 1e6:.2f} +/- {s['kappa_0_hz'] / 1e6:.2f} MHz")
+print(f"delay {r['delay_s'] * 1e9:.3f} ns, conjugate convention: "
+      f"{r['conjugate']}, p = {r['p_value']:.2f}")
+
+# The power alone (the same scan, |t|^2) gives two answers.
+p = fit_resonance_transmission(f, np.abs(t) ** 2)
+print(f"power only: eta_esc = {p['eta_over']:.4f} or {p['eta_under']:.4f}")
+```
+
+```
+eta_esc = 0.7996 +/- 0.0008: over-coupled, 399 sigma above 1/2
+kappa = 100.03 +/- 0.16 MHz, kappa_0 = 20.04 +/- 0.10 MHz
+delay 3.000 ns, conjugate convention: True, p = 0.30
+power only: eta_esc = 0.7998 or 0.2002
+```
+
+A power scan (example 22) cannot tell an over-coupled ring from an
+under-coupled one with the same linewidth: `eta` and `1 - eta` make
+the same dip, as the last line shows. The phase can. As the laser
+crosses the resonance, the complex transmission `1 - 2 eta / (1 - i
+x)` (with `x` the detuning in half linewidths) traces a circle of
+radius `eta` around the point `1 - eta`. The circle goes around the
+origin when `eta > 1/2`, so the phase of this factor turns by a full
+`2 pi`, and stays beside it when `eta < 1/2`.
+`fit_complex_transmission` fits that circle to a scan that records
+amplitude and phase (for example with an optical vector network
+analyzer, or by heterodyne detection against a reference) and returns
+one escape efficiency with one error bar. It says "over" or "under"
+when the efficiency is more than 3 error bars away from 1/2, and
+"critical" otherwise. The level, the phase and a delay of the setup
+(the phase that grows linearly with frequency in a long cable or
+fiber) are fitted along, and so is the sign convention of the
+instrument's phase (`conjugate`). `through_amplitude` is the model
+itself. As for the power fit, a doublet, a dip bent by heating, or a
+second light path that interferes with the resonance is not modeled;
+with `sigma` the chi-square test refuses such data.
+
+### 27. The best worst case over a band
+
+```python
+import numpy as np
+from sqzcomb import single_mode_parametric, optimal_band_quadrature
+
+# The detuned squeezer and the band of example 20, with three meanings
+# of "the best fixed angle".
+M = single_mode_parametric(0.6, delta=0.3)
+band = np.linspace(0.0, 2.0, 21)
+for goal in ("mean", "worst", "penalty"):
+    r = optimal_band_quadrature(M, 0.8, band, 0, 1, goal=goal)
+    print(f"{goal:7s} phi = {r['phi']:.4f}: average {r['squeezing_db_band']:.3f} dB, "
+          f"least squeezed {r['worst_db']:.3f} dB, "
+          f"largest shortfall {r['worst_penalty_db']:.3f} dB")
+```
+
+```
+mean    phi = 1.7506: average -3.253 dB, least squeezed -1.449 dB, largest shortfall 0.271 dB
+worst   phi = 1.6275: average -2.786 dB, least squeezed -1.519 dB, largest shortfall 3.067 dB
+penalty phi = 1.7659: average -3.245 dB, least squeezed -1.431 dB, largest shortfall 0.108 dB
+```
+
+Example 20 picked the fixed angle with the lowest band average. Two
+other goals are offered. `goal="worst"` makes the least squeezed
+frequency of the band as squeezed as possible; here that is the top of
+the band, so the angle is that frequency's own best angle. It gains
+0.07 dB there against the angle of example 20, but at low frequencies
+it falls up to 3.07 dB short of what the best angle there would give.
+`goal="penalty"` keeps every frequency as close as possible to what its
+own best angle would give: no frequency is more than 0.108 dB short
+(against 0.271 dB at the angle of example 20), for 0.008 dB of band
+average. Both are found exactly, without a scan: each frequency's
+variance has the form `c0 + c1 cos 2phi + c2 sin 2phi`, and the largest
+of such curves is lowest either at the minimum of one of them or where
+two of them cross, which are known in closed form. The cost grows with
+the cube of the number of frequencies (0.7 s for 400 on the machine
+that ran the tests).
+
 ## Tutorials
 
 Three scripts in `examples/` go from synthetic "measured" data (made
@@ -1427,7 +1536,11 @@ deepest reachable: -6.37 +/- 0.02 dB at mu = 0.788
   frequency or over a spectrum (example 18).
 - `optimal_band_quadrature` (new in 0.15): the one fixed angle that
   gives the lowest (optionally weighted) average noise over a band of
-  frequencies, and what it costs at each frequency (example 20).
+  frequencies, and what it costs at each frequency (example 20). Since
+  0.18 it also finds the angle with the best worst case, `goal="worst"`
+  (the least squeezed frequency as squeezed as possible) or
+  `goal="penalty"` (no frequency far short of its own best angle),
+  exactly (example 27).
 - `output_covariance_xxpp` -- the full output covariance matrix;
   `output_entanglement`, `output_entanglement_spectrum` -- `E_N`
   between two output lines, optionally after detection loss.
@@ -1557,6 +1670,10 @@ deepest reachable: -6.37 +/- 0.02 dB at mu = 0.788
   linewidth, escape efficiency and splitting of a resonance split into
   a doublet by backscattering, fitted for both coupling regimes
   (example 25).
+- `fit_complex_transmission`, `through_amplitude` (new in 0.18): the
+  linewidth, the escape efficiency and whether the ring is over- or
+  under-coupled, from a scan of the transmission with its phase, with
+  error bars and a model check (example 26).
 
 Each function's docstring (`help(sqzcomb.output_quadrature_variance)`,
 for example) gives its inputs, units and conventions.
@@ -1679,11 +1796,27 @@ for example) gives its inputs, units and conventions.
   then), a scan that does not reach one linewidth beyond both dips, or
   data the doublet does not describe; `through_transmission` and
   `split_transmission` get a center frequency or baseline that is not
-  finite.
+  finite;
+- (new in 0.18) a drift matrix does not damp each mode at the decay
+  rate the function uses (1 for the single-ring functions, `gammas`
+  for `output_variance_ports`, `intracavity_covariance`,
+  `covariance_evolution` and `temporal_mode_variance`), or `gammas` are
+  negative or not finite; `intracavity_covariance` gets a largest
+  growth rate within 1e-6 of zero (as around a soliton, whose
+  covariance is infinite along its free translation) without
+  `allow_marginal=True`, or one of zero or more with it;
+  `fluctuation_matrix` (and the molecule builders) gets a mode listed
+  twice, a mode number that is not an integer, or no modes;
+  `lle_evolve` gets a step `dt` that is not positive or a `t_end` that
+  is negative or not finite; `max_phase_noise` gets a target that is
+  not finite; `fit_complex_transmission` gets a transmission that is
+  not complex, a resonance it cannot resolve, or the refusals of
+  `fit_resonance_transmission`; `optimal_band_quadrature` gets a
+  `goal` other than "mean", "worst" or "penalty".
 
 ## How the results are checked
 
-260 automated tests run on every push and pull request, on Python 3.9,
+303 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest versions the package allows (NumPy 1.22.0, SciPy 1.10.0, QuTiP
 4.7.0). The five QuTiP tests are skipped when QuTiP is not installed,
@@ -1838,6 +1971,49 @@ with the tolerances the tests use:
   old fixed relative bound of 1e-13 did not follow; measured up to
   1.1e-14 on one machine), and `dark_from_clearance_db(10.0)`, which
   is exactly 0.05 only with a correctly rounded `pow`.
+
+**New in 0.18**
+
+- `through_amplitude` equals the through-port amplitude `2 eta G - 1`
+  built from the package's drift matrix and resolvent, with the sign
+  reversed (to 1e-14 at 35 detunings and efficiencies), its conjugate
+  convention equals the complex conjugate, its squared modulus equals
+  `through_transmission` (relative 1e-13), and it lies on the circle
+  of radius `eta` around `1 - eta` (1e-14).
+- `fit_complex_transmission`: noise-free scans with a level, a phase
+  and a 3 ns delay give back the efficiency, linewidth and level to a
+  relative 1e-9, the phase to 1e-9 rad, the delay to a relative 1e-8
+  and the center to 1e-6 linewidths, in both phase conventions, for
+  efficiencies 0.1, 0.3, 0.5, 0.7 and 0.95. The efficiency and the
+  linewidth come back to a relative 1e-9 also from a scan that reaches
+  only about 1.5 linewidths beyond the resonance. On noisy scans it lands
+  on the right one of the two answers of the power fit of the same
+  data, within three combined error bars and more than 20 away from
+  the other. Over 80 seeded noisy scans for each of two efficiencies,
+  the scatter of the efficiency, linewidth, center, `kappa_ex`,
+  `kappa_0` and delay is between 0.75 and 1.3 times the reported error
+  bars (measured: 0.91 to 1.09), and chi-square averages to its degrees
+  of freedom within 5 % (measured: 0.4 %). Critical coupling is
+  reported as such, and a doublet is refused by chi-square.
+- `optimal_band_quadrature` with `goal="worst"` and `"penalty"`: the
+  angle search returns the known answer on hand-solvable pairs of
+  curves (1e-12); on the detuned squeezer of example 20 the result is
+  never worse than any of 200001 scanned angles, on variances built
+  from the 2x2 blocks of `output_covariance_xxpp` (a separate code
+  path), comes within a relative 1e-8 of the scan refined by a bounded
+  minimizer, and has the same angle within 1e-6. The answer meets the
+  optimality condition of a minimax (the leading frequency at its own
+  best angle, or two frequencies tied); each goal is best at its own
+  number; with no detuning every goal gives `pi/2` (1e-9) and the
+  closed form (relative 1e-12); with one frequency, every goal gives
+  `optimal_quadrature` (1e-9).
+- The damping check: a parametric mode with decay `gamma` through
+  `output_variance_ports` equals the closed form with its rates
+  divided by `gamma` (relative 1e-12), and a passive one is vacuum
+  (1e-14).
+- The five fixes under [Corrections](#corrections) each have a test
+  that fails on 0.17.0 (`tests/test_audit_018.py`; three of its 14
+  tests are checks of calls that were already right).
 
 **Photonic molecules**
 
@@ -2024,7 +2200,41 @@ with the tolerances the tests use:
 
 ## Corrections
 
-**0.17.0 (this release)** fixes one wrong answer. Its test
+**0.18.0 (this release)** fixes five inputs that gave a wrong answer
+without an error. Each fix has a test (`tests/test_audit_018.py`) that
+fails on 0.17.0:
+
+- A drift matrix whose damping was not the decay rate the formulas use
+  gave wrong numbers. The single-ring functions take every mode to
+  decay at rate 1, the port functions at the rates `gammas`; only then
+  does a passive mode return vacuum. A passive mode damped at 0.5 gave
+  4.500 instead of 0.5 through `output_quadrature_variance`
+  (`eta = 1`, `omega = 0`), and the passive molecule
+  `photonic_molecule(0, 1, gamma=9)` read through
+  `output_variance_ports` with `gammas=[1, 1]` gave 0.340, an apparent
+  -1.67 dB of squeezing from no pump at all (0.500 with the right
+  `gammas`); `intracavity_covariance` gave that passive state negative
+  photon numbers. Such inputs are now refused.
+- `intracavity_covariance` returned a number for a marginally stable
+  drift matrix. Around a soliton its free translation has a growth
+  rate of zero, and the covariance is infinite along it; with a rate
+  that rounded to -5.1e-14 the result had entries of 1.5e14. A growth
+  rate within 1e-6 of zero is now refused unless `allow_marginal=True`,
+  as in the spectra. A state that close to threshold and genuinely
+  stable needs that flag now, and then gives the same numbers as
+  before.
+- `lle_evolve` stopped at `round(t_end / dt) dt` instead of `t_end`:
+  `t_end = 0.25` with `dt = 0.1` ended at 0.2 (for a decaying flat
+  field, 8.187e-4 instead of 7.788e-4), and `t_end = 0.04` returned the
+  start unchanged. It now ends at `t_end` exactly; a `t_end` that is a
+  whole number of steps gives the same result as before, bit for bit.
+- `fluctuation_matrix` kept a mode listed twice as two coupled copies:
+  for the flat state of example 3 at `eta = 0.8`, `modes=[0, 0]` gave
+  -1.279 dB instead of -4.194 dB, and `modes=[0, 0.6]` was read as
+  `[0, 0]`. Both are now refused.
+- `max_phase_noise` returned NaN for a NaN target instead of an error.
+
+**0.17.0** fixes one wrong answer. Its test
 (`tests/test_audit_017.py`) fails on 0.16.0:
 
 - `fit_resonance_transmission` with `branch` gave wrong error bars for
@@ -2163,7 +2373,32 @@ for the real tolerances). The full history is in
 
 ## Limits
 
-What 0.17.0 adds to the picture:
+What 0.18.0 adds to the picture:
+
+- **Coupling regime.** The 0.16 limit "the scan cannot decide between
+  over- and under-coupling" still holds for a power scan, and is closed
+  for a scan that records the phase too (example 26). The fit assumes
+  one resonance on a bus with a flat level, a constant phase and a
+  linear phase from a delay. A second light path that interferes with
+  the resonance (it tilts and moves the circle), a doublet, or a dip
+  bent by heating is not modeled; with `sigma` the chi-square test
+  refuses such data, without it look at the residuals. The noise is
+  taken to be equal and independent on the real and the imaginary
+  part.
+- **Worst case over a band.** The 0.15 limit "other goals, such as the
+  best worst case in dB, are not offered" is closed for the single
+  ring (example 27). For the molecule's ports only the band average is
+  offered (through `quadrature_extremes`). The worst case counts every
+  frequency of the list equally, whatever its weight, and its cost
+  grows with the cube of the number of frequencies.
+- **Decay rates.** A drift matrix must damp each mode at the rate the
+  function uses (1, or `gammas`); models with any other damping (for
+  example a loss that the bath couplings do not carry) are refused, not
+  computed. The classical-noise functions do not check it: the
+  variance they add is a linear response, computed the same way for
+  any drift matrix, so keeping that matrix consistent is up to you.
+
+What 0.17.0 added:
 
 - **Loss and jitter from pairs.** `fit_squeezing_pairs` assumes a pure
   source behind one efficiency and one Gaussian jitter that are the
