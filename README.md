@@ -23,7 +23,8 @@ It answers questions such as:
 - At which local-oscillator angle is the light most squeezed, at each
   analysis frequency? (Found exactly, without scanning angles.) And
   which one fixed angle is best for a whole band of frequencies, on
-  average or for the worst frequency in it?
+  average or for the worst frequency in it, for one ring or for the
+  port of two coupled rings?
 - Can a second, coupled ring get the light out better than one ring
   alone can?
 - Are two comb lines entangled at the output, and would a detector be
@@ -35,7 +36,8 @@ It answers questions such as:
   add to those error bars?
 - Before measuring: will the planned frequencies pin down the
   parameters at all? And how close to threshold must the ring be
-  pumped for a target squeezing, given the losses and the jitter?
+  pumped for a target squeezing, given the losses, the jitter and a
+  detuning?
 - What are the ring's linewidth and escape efficiency, from a laser
   sweep across one resonance, also when backscattering splits it into
   a doublet? Is the ring over- or under-coupled? (The phase of the
@@ -211,8 +213,9 @@ newer. QuTiP (4.7 or newer) is needed only for `drift_from_qutip`.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with sqzcomb 0.18.0. Examples 1 to 25 print the same as with
-0.17.0, and examples 1 to 23 the same as with 0.16.0; examples 1 to 21
+printed with sqzcomb 0.19.0. Examples 1 to 27 print the same as with
+0.18.0, examples 1 to 25 the same as with 0.17.0, and examples 1 to 23
+the same as with 0.16.0; examples 1 to 21
 print the same as with 0.15.1, except one line of example 5, which
 0.16.0 corrected (see [Corrections](#corrections)). The device and
 pump numbers are illustrative values chosen for the example, not
@@ -265,7 +268,7 @@ from sqzcomb import (single_mode_parametric, output_quadrature_variance,
                      output_variance_ports)
 
 # One ring, pumped at 99 % of threshold (mu = 0.99), noise read at the
-# centre of the spectrum (omega = 0) in the squeezed quadrature (phi = pi/2).
+# center of the spectrum (omega = 0) in the squeezed quadrature (phi = pi/2).
 M = single_mode_parametric(0.99)
 for eta in (0.5, 0.8, 1.0):
     v = output_quadrature_variance(M, eta, 0.0, mode_index=0, n_modes=1,
@@ -779,7 +782,7 @@ from sqzcomb import parametric_pulse_drift, temporal_mode_variance
 
 # Pump pulse (in units of the cavity time 2/kappa) whose peak gain
 # briefly exceeds threshold (|mu| = 1.6 > 1); the detector's LO pulse
-# is a Gaussian centred slightly later.
+# is a Gaussian centered slightly later.
 mu = lambda t: 1.6 * np.exp(-((t - 5.0) / 1.5) ** 2)
 lo = lambda t: np.exp(-((t - 7.0) / 1.5) ** 2)       # normalized for you
 drift = parametric_pulse_drift(mu)
@@ -1018,8 +1021,9 @@ jitter and dark noise together and invert the budget exactly.
 into dB relative to shot noise: sweeps are averaged in linear power,
 the dark trace is subtracted if given, and the error bar is the
 standard error from the sweep-to-sweep scatter. The traces here are
-made-up numbers for the example. It does not correct for an analyzer
-that averaged in dB (log) mode. The dark variance it reports (0.01633
+made-up numbers for the example. Traces from an analyzer that averaged
+in dB (log) mode need no correction (example 30). The dark variance it
+reports (0.01633
 at the first frequency, where the shot and dark traces are 14.9993 dB
 apart) is what `dark_from_clearance_db(14.9993, trace_gap=True)` gives;
 without `trace_gap=True` the same 14.9993 dB would be read from the
@@ -1432,9 +1436,143 @@ own best angle would give: no frequency is more than 0.108 dB short
 average. Both are found exactly, without a scan: each frequency's
 variance has the form `c0 + c1 cos 2phi + c2 sin 2phi`, and the largest
 of such curves is lowest either at the minimum of one of them or where
-two of them cross, which are known in closed form. The cost grows with
-the cube of the number of frequencies (0.7 s for 400 on the machine
-that ran the tests).
+two of them cross, which are known in closed form. There are about
+`n^2` such angles for `n` frequencies; since 0.19 most of them are
+ruled out cheaply before the curves are evaluated there, and a call
+with 400 frequencies took 0.04 to 0.13 s on the shared machine that
+ran the tests (0.34 to 0.47 s with 0.18), with 1000 frequencies 0.13
+to 0.50 s (5 to 10 s). For the port of two coupled rings, see example
+28.
+
+### 28. One fixed angle for the port of two coupled rings
+
+```python
+import numpy as np
+from sqzcomb import photonic_molecule, output_variance_ports, optimal_band_angle
+
+# A detuned photonic molecule (illustrative: gain 0.6, J = 1.2,
+# gamma = 2, main ring detuned by 0.3), read at the auxiliary ring's
+# port with eta = 0.9, recorded from omega = 0 to 2 at one fixed angle.
+M, g = photonic_molecule(0.6, 1.2, delta_a=0.3, gamma=2.0)
+band = np.linspace(0.0, 2.0, 21)
+
+def band_at(phi):
+    return np.array([output_variance_ports(M, g, 0.9, 1, w, phi=phi)
+                     for w in band])
+
+for goal in ("mean", "worst", "penalty"):
+    r = optimal_band_angle(band_at, goal=goal)
+    print(f"{goal:7s} phi = {r['phi']:.4f}: average {r['squeezing_db_band']:.3f} dB, "
+          f"least squeezed {r['worst_db']:.3f} dB, "
+          f"largest shortfall {r['worst_penalty_db']:.3f} dB")
+```
+
+```
+mean    phi = 0.1407: average -1.090 dB, least squeezed -0.547 dB, largest shortfall 0.006 dB
+worst   phi = 0.0840: average -1.072 dB, least squeezed -0.552 dB, largest shortfall 0.044 dB
+penalty phi = 0.1329: average -1.089 dB, least squeezed -0.548 dB, largest shortfall 0.004 dB
+```
+
+`optimal_band_quadrature` (examples 20 and 27) works on a single
+ring's drift matrix. `optimal_band_angle` takes the band as a function
+of the angle instead, here the noise at the auxiliary ring's port of a
+photonic molecule at 21 frequencies, and offers the same three goals,
+solved the same way, exactly and without a scan. Any function works
+whose values are quadrature variances (not dB): each of them has the
+form `c0 + c1 cos 2phi + c2 sin 2phi`, which the function checks. It
+calls the function about `n + 7` times for `n` frequencies. In this
+molecule the best angle moves little across the band (from 0.084 to
+0.155 rad), so the three goals differ by less than 0.02 dB in the
+average.
+
+### 29. The gain for a target squeezing, with a detuning
+
+```python
+from sqzcomb import gain_for_squeezing
+
+# Total efficiency 0.72, read at omega = 0.2, 20 mrad of jitter, as in
+# example 23, now with the squeezed mode detuned (illustrative values).
+for delta in (0.0, 0.3, 1.0):
+    r = gain_for_squeezing(-4.0, eta=0.72, omega=0.2, theta_rms=0.02,
+                           delta=delta)
+    th = r.get("mu_threshold", 1.0)
+    print(f"delta = {delta}: -4 dB needs mu = {r['mu']:.4f} "
+          f"({r['mu'] / th:.3f} of threshold {th:.4f}), "
+          f"antisqueezing {r['anti_db']:+.2f} dB; best {r['best_db']:.2f} dB")
+```
+
+```
+delta = 0.0: -4 dB needs mu = 0.4476 (0.448 of threshold 1.0000), antisqueezing +6.75 dB; best -5.10 dB
+delta = 0.3: -4 dB needs mu = 0.4769 (0.457 of threshold 1.0440), antisqueezing +6.75 dB; best -5.10 dB
+delta = 1.0: -4 dB needs mu = 0.7545 (0.533 of threshold 1.4142), antisqueezing +6.75 dB; best -5.10 dB
+```
+
+A detuning `delta` (in units of `kappa/2`, as in
+`single_mode_parametric`) raises the threshold to `mu = sqrt(1 +
+delta^2)` and turns the squeezed quadrature away from a fixed angle.
+`gain_for_squeezing` now takes it: the local oscillator is taken to sit
+at the best angle for this frequency and gain (as `optimal_quadrature`
+finds it), and the jitter to scatter it around that angle. The gain
+needed grows, also as a fraction of the threshold. The antisqueezing at
+the target and the best reachable value with jitter do not change:
+without loss the output of one mode is a pure state at every analysis
+frequency (the product of its smallest and largest variance is 1/4),
+so for any detuning the detected pairs lie on the same curve, and only
+the gain that reaches a point on it differs. Without jitter the best
+value does depend on the detuning; a large one (`delta = 2` at
+`omega = 0.5`) even puts it before threshold.
+
+### 30. Traces averaged in dB
+
+```python
+import numpy as np
+from sqzcomb import shot_noise_normalize
+
+# Simulated traces from an analyzer that averaged in dB: each value is
+# the mean of 4000 readings of 10 log10(P), with P the power of Gaussian
+# noise (exponentially distributed). True mean powers: shot noise 1,
+# dark noise 15 dB below it, and a signal 4 dB below shot noise once the
+# dark noise is removed. 20 sweeps, two analysis frequencies.
+rng = np.random.default_rng(11)
+shot = np.ones(2)
+dark = 10 ** -1.5 * shot
+sig = 10 ** -0.4 * (shot - dark) + dark
+
+def log_averaged(power):
+    reads = rng.exponential(1.0, size=(20, 4000, power.size)) * power
+    return np.mean(10 * np.log10(reads), axis=1)
+
+tr, sh, dk = log_averaged(sig), log_averaged(shot), log_averaged(dark)
+print(f"shot-noise trace reads {np.mean(sh):.3f} dB (true level 0 dB)")
+out = shot_noise_normalize(tr, sh, dk)
+print("dB re shot noise:", np.round(out["db"], 3), "+/-",
+      np.round(out["sigma_db"], 3), "(true -4)")
+print("dark noise, vacuum units:", np.round(out["dark_variance"], 5),
+      f"(true {0.5 * dark[0] / (shot[0] - dark[0]):.5f})")
+```
+
+```
+shot-noise trace reads -2.495 dB (true level 0 dB)
+dB re shot noise: [-3.994 -3.996] +/- [0.029 0.026] (true -4)
+dark noise, vacuum units: [0.01622 0.01634] (true 0.01633)
+```
+
+A spectrum analyzer that averages in dB (a narrow video bandwidth, or
+trace averaging on a log display) reads Gaussian noise low: by
+`10 gamma / ln 10 = 2.507 dB` when many readings are averaged, with
+`gamma = 0.5772...` Euler's constant, because the noise power is
+exponentially distributed and the mean of its logarithm is `gamma`
+below the logarithm of its mean. HP Application Note 1303, "Spectrum
+Analyzer Measurements and Noise" (1998), gives the same 2.51 dB. Up to
+0.18 this README said that `shot_noise_normalize` does not correct for
+it. It needs no correction: shot noise, squeezed vacuum and electronic
+noise are all Gaussian noise, so with the same analyzer settings every
+trace reads low by the same factor, and both results are ratios in
+which it cancels, the dark subtraction included. The simulation shows
+it: the shot-noise trace alone reads 2.5 dB low, the result comes out
+at the true -4 dB within its error bars and the dark noise at its true
+value. This holds for traces of noise only; a laser tone or a pickup
+line in a trace reads low by a different amount.
 
 ## Tutorials
 
@@ -1541,6 +1679,9 @@ deepest reachable: -6.37 +/- 0.02 dB at mu = 0.788
   (the least squeezed frequency as squeezed as possible) or
   `goal="penalty"` (no frequency far short of its own best angle),
   exactly (example 27).
+- `optimal_band_angle` (new in 0.19): the same three goals for any
+  variance given as a function of the angle, such as the port of a
+  photonic molecule (example 28).
 - `output_covariance_xxpp` -- the full output covariance matrix;
   `output_entanglement`, `output_entanglement_spectrum` -- `E_N`
   between two output lines, optionally after detection loss.
@@ -1655,14 +1796,16 @@ deepest reachable: -6.37 +/- 0.02 dB at mu = 0.788
   calibration, and a checked CSV format for spectra.
 - `shot_noise_normalize` -- raw analyzer traces in dBm (repeated
   sweeps allowed) to dB relative to shot noise, with optional dark
-  subtraction and standard errors.
+  subtraction and standard errors; traces averaged in dB need no
+  correction (example 30).
 - `fit_resonance_transmission`, `through_transmission` (new in 0.16):
   the loaded linewidth and the escape efficiency (both the over- and
   the under-coupled answer) from a transmission scan across one
   resonance, with error bars and a model check (example 22).
 - `gain_for_squeezing` (new in 0.16): the smallest parametric gain
   that gives a target detected squeezing after loss, jitter and dark
-  noise, and the best gain when jitter limits it (example 23).
+  noise, and the best gain when jitter limits it (example 23); since
+  0.19 also for a detuned mode (`delta`, example 29).
 - `fit_squeezing_pairs` (new in 0.17): the total efficiency and the
   phase jitter from squeezed / antisqueezed pairs measured at several
   pump levels, with error bars and a chi-square check (example 24).
@@ -1813,10 +1956,27 @@ for example) gives its inputs, units and conventions.
   not complex, a resonance it cannot resolve, or the refusals of
   `fit_resonance_transmission`; `optimal_band_quadrature` gets a
   `goal` other than "mean", "worst" or "penalty".
+- (new in 0.19) a NaN or infinite analysis frequency, angle or thermal
+  occupation in the spectra (`output_quadrature_variance`,
+  `output_covariance_xxpp`, `optimal_quadrature` and the functions built
+  on them, `output_variance_ports`), which gave NaN; `noise_spectrum_db`
+  gets a linewidth that is not positive (a negative one gave the curve
+  of the positive one), a gain outside [0, 1) (a negative one swapped
+  the two quadratures), a negative or non-finite dark floor, or a
+  non-finite frequency; the ready-made spectrum models get a linewidth
+  that is not positive; `phase_noise_variance` gets a negative or
+  non-finite variance or a non-finite offset (a negative variance gave
+  a negative result), and `detected_variance` a NaN variance;
+  `thermal_occupation` a NaN frequency or temperature,
+  `threshold_power` a NaN detuning, `intracavity_photons` a NaN
+  intensity; `optimal_band_angle` a function that does not return a
+  1-D array of finite variances of one length, or is not of the form
+  `c0 + c1 cos 2phi + c2 sin 2phi`; `gain_for_squeezing` a non-finite
+  `delta`, or a `mu_max` at or above the threshold `sqrt(1 + delta^2)`.
 
 ## How the results are checked
 
-303 automated tests run on every push and pull request, on Python 3.9,
+331 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest versions the package allows (NumPy 1.22.0, SciPy 1.10.0, QuTiP
 4.7.0). The five QuTiP tests are skipped when QuTiP is not installed,
@@ -2015,6 +2175,47 @@ with the tolerances the tests use:
   that fails on 0.17.0 (`tests/test_audit_018.py`; three of its 14
   tests are checks of calls that were already right).
 
+**New in 0.19**
+
+- `optimal_band_angle` on the port of a detuned photonic molecule (15
+  frequencies), for each goal: each frequency's own best variance
+  equals a bounded minimization of the port variance at that frequency
+  (relative 1e-9; measured 4e-16), and the result equals a scan of 721
+  angles refined by a bounded minimizer on the port variances (relative
+  1e-9; measured 9e-16, and for "penalty" 4e-11 better than the scan),
+  with the same angle (1e-5; measured below 1e-9). Given a single-ring
+  variance it returns exactly what `optimal_band_quadrature` returns
+  (tested with `==`), and through a molecule with `J = 0`, a separate
+  code path, the same angle (1e-9; measured 3e-15) and variances
+  (relative 1e-12; measured 5e-15).
+- The faster worst-case search returns bit for bit the angle of the
+  0.18 code (kept in the test) on 400 random families of curves (with
+  flat, nearly flat and repeated curves) and on the band of example 27
+  at 400 frequencies.
+- `gain_for_squeezing` with a detuning is checked against the output
+  noise of the detuned mode written out in real quadratures, a 2 x 2
+  calculation that does not use the package's complex form: the target
+  (1e-9 dB; measured 3e-15), the antisqueezing (measured 4e-15) and the
+  best value (measured 9e-14) at four settings with jitter, dark noise
+  and both dark conventions, and a scan of 4000 gains, which finds
+  nothing deeper than the reported best and reaches the target first
+  within one grid step above the answer. The threshold moves to
+  `sqrt(1 + delta^2)` (eigenvalues to 1e-12). Without loss the output is
+  pure (`V_min V_max = 1/4`, measured 7e-16), so the antisqueezing at
+  the target and the best value with jitter equal those without
+  detuning (1e-9 dB; measured 4e-15). `delta = 0` gives the 0.18 result
+  exactly, and `delta = 1e-6` agrees with it to a relative 1e-9
+  (measured 7e-13).
+- Traces averaged in dB: the 2.507 dB constant equals a numerical
+  integral of `ln(x) e^-x` (relative 1e-10; measured 4e-15); seeded
+  simulations of log-averaged Gaussian noise with 4 and with 4000
+  readings per value give back the true level within 4 of the reported
+  error bars (measured up to 1.3) and the true dark variance within 4 of
+  its standard error (measured up to 1.04).
+- The fixes under [Corrections](#corrections) each have a test
+  (`tests/test_audit_019.py`) that fails on 0.18.0 (one of its 6 tests
+  checks a call that was already right).
+
 **Photonic molecules**
 
 - With `J = 0` the molecule reproduces the single-mode closed form to
@@ -2200,7 +2401,31 @@ with the tolerances the tests use:
 
 ## Corrections
 
-**0.18.0 (this release)** fixes five inputs that gave a wrong answer
+**0.19.0 (this release)** refuses inputs that gave a wrong or NaN
+answer without an error. Each fix has a test
+(`tests/test_audit_019.py`) that fails on 0.18.0:
+
+- `noise_spectrum_db` accepted a negative linewidth and returned the
+  curve of the positive one (the spectrum is even in the frequency),
+  so `noise_spectrum_db(0.5, 0.8, -1e7, f)` looked valid; a negative
+  gain swapped the two quadratures (`mu = -0.5` with `eta = 0.8` gave
+  +8.14 dB as "squeezed" at 1 MHz with a 10 MHz linewidth); a negative
+  dark floor lowered the noise. The ready-made models of
+  `fit_spectra_model` accepted a negative linewidth too and returned
+  the curves of the positive one. All are refused now;
+  `fit_noise_spectra` and `plan_noise_measurement`, which keep their
+  parameters in range, give the same numbers as before.
+- `phase_noise_variance` accepted a negative variance and returned a
+  negative one (-0.079 for `(-0.1, 2.0, 0.1)`), and a NaN offset;
+  `detected_variance` passed a NaN variance.
+- A NaN or infinite analysis frequency, a NaN angle or a NaN thermal
+  occupation gave a NaN variance in `output_quadrature_variance`,
+  `output_covariance_xxpp` and `output_variance_ports`, without an
+  error (`optimal_quadrature` already refused, with a less clear
+  message). `thermal_occupation`, `threshold_power` and
+  `intracavity_photons` returned NaN for a NaN input.
+
+**0.18.0** fixes five inputs that gave a wrong answer
 without an error. Each fix has a test (`tests/test_audit_018.py`) that
 fails on 0.17.0:
 
@@ -2373,7 +2598,33 @@ for the real tolerances). The full history is in
 
 ## Limits
 
-What 0.18.0 adds to the picture:
+What 0.19.0 adds to the picture:
+
+- **Worst case over a band, any model.** The 0.18 limit "for the
+  molecule's ports only the band average is offered" is closed:
+  `optimal_band_angle` takes any variance as a function of the angle
+  (example 28). It calls that function once per frequency and a few
+  times more. The worst-case search is much faster (example 27), but
+  in the worst case its cost still grows with the cube of the number
+  of frequencies: when many curves share the top of the band, few
+  candidate angles can be ruled out early.
+- **Analyzer averaging in dB.** The 0.14 limit "it does not correct
+  for an analyzer that averaged in dB" is closed by showing that no
+  correction is needed for the ratios `shot_noise_normalize` returns
+  (example 30). That holds for traces of Gaussian noise taken with the
+  same settings; a trace holding a laser tone or a pickup line is not
+  covered, and absolute levels in dBm from such an analyzer still read
+  low.
+- **Gain planning with a detuning.** The 0.16 limit "uses the
+  single-mode model without detuning" is closed (example 29). The
+  local oscillator is assumed to sit at the best angle for the chosen
+  frequency and gain; with a fixed angle across a band, use
+  `optimal_band_quadrature` instead. The gain is still not converted
+  into a pump power, because that depends on the device (for a Kerr
+  comb, on the detuning and the comb state), and the model is still
+  one mode.
+
+What 0.18.0 added:
 
 - **Coupling regime.** The 0.16 limit "the scan cannot decide between
   over- and under-coupling" still holds for a power scan, and is closed
@@ -2452,7 +2703,7 @@ What 0.15.0 added:
   variance over the band. Other goals, such as the best worst case in
   dB, are not offered.
 - **Calibration error.** Only an error of the shot-noise reference is
-  modelled, as one offset in dB shared by every point of both traces
+  modeled, as one offset in dB shared by every point of both traces
   (both traces divided by the same reference). An error that differs
   between the traces, or that changes with frequency, is not. Its
   size, `calib_sigma_db`, has to come from your own calibration

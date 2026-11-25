@@ -1,5 +1,153 @@
 # Changelog
 
+## 0.19.0 (2026-11-25)
+
+The best fixed local-oscillator angle over a band for any model (the
+port of two coupled rings included), a much faster worst-case angle
+search, the gain a target squeezing needs with a detuned mode, the
+answer to "what about an analyzer that averaged in dB?", and checks on
+inputs that gave a wrong or NaN answer without an error.
+
+### Added
+
+- `optimal_band_angle(variance_at, weights=None, goal="mean")`: the
+  best fixed angle over a band of frequencies, with the goals "mean",
+  "worst" and "penalty" of `optimal_band_quadrature`, for a band given
+  as any function of the angle (for example the variances at the port
+  of a photonic molecule from `output_variance_ports`). It closes the
+  0.18 limit "for the molecule's ports only the band average is
+  offered". Solved exactly as for the single ring; the function is
+  called about `n + 7` times for `n` frequencies, and its values are
+  checked to have the form `c0 + c1 cos 2phi + c2 sin 2phi`. With a
+  single-ring variance it returns exactly what
+  `optimal_band_quadrature` returns, which now shares its code. README
+  example 28.
+- `gain_for_squeezing(..., delta=0.0)`: the detuning of the squeezed
+  mode, in units of kappa/2 as in `single_mode_parametric`. The
+  threshold moves to `sqrt(1 + delta^2)` (returned as `mu_threshold`),
+  the local oscillator is taken to sit at the best angle for the chosen
+  frequency and gain, and the jitter to scatter it around that angle.
+  `mu_max` now defaults to None, which means just below that threshold
+  (`1 - 1e-9` without detuning, as before). With `delta = 0` the
+  function runs exactly as before. It closes the 0.16 limit "uses the
+  single-mode model without detuning". README example 29.
+- README example 30 and the docstring of `shot_noise_normalize`:
+  traces from an analyzer that averaged in dB need no correction. A
+  log-averaged value of Gaussian noise reads `10 gamma / ln 10 =
+  2.507 dB` low when many readings are averaged (`gamma` is Euler's
+  constant; HP Application Note 1303, "Spectrum Analyzer Measurements
+  and Noise", literature number 5966-4008E, 1998, p. 8, gives 2.51 dB),
+  but every noise trace reads low by the same factor, which cancels in
+  the ratios the function returns, the dark subtraction included. This
+  closes the 0.14 limit "it does not correct for an analyzer that
+  averaged in dB"; no code changed for it.
+- New test files `tests/test_band_angle_any.py` (11 tests),
+  `tests/test_gain_detuned.py` (8), `tests/test_log_average.py` (3) and
+  `tests/test_audit_019.py` (6).
+
+### Changed
+
+- The worst-case search of `optimal_band_quadrature` (`goal="worst"`
+  and `"penalty"`) rules out most candidate angles before evaluating
+  them: the largest curve at an angle is at least the largest of the
+  few curves that top the band on a coarse grid, and a candidate whose
+  bound is above the best own-minimum value cannot win. It returns
+  the same angle as 0.18 bit for bit (tested against the 0.18 code on
+  400 random curve families and at 400 frequencies). Measured on a
+  shared machine with 2 CPUs, median of 5 calls, old and new code run
+  in turn three times (the range over the runs is given): 400
+  frequencies 0.34-0.47 s -> 0.04-0.13 s, 1000 frequencies
+  5.0-10.3 s -> 0.13-0.50 s, 21 frequencies unchanged (2 to 8 ms
+  either way, set by the machine load). `optimal_band_quadrature` also
+  no longer evaluates the largest variance at each frequency, which no
+  result used.
+- `gain_for_squeezing`: `mu_max` defaults to None instead of
+  `1 - 1e-9` (the same value when there is no detuning).
+- README: examples 28 to 30, the new refusals, checks, corrections and
+  limits; the note on the cost of example 27; 331 tests (303 in
+  0.18.0). Examples 1 to 27 print the same as with 0.18.0.
+
+### Fixed
+
+- `noise_spectrum_db` accepted a negative linewidth and returned the
+  curve of the positive one (the spectrum is even in the frequency); a
+  negative gain swapped the two quadratures (`mu = -0.5`, `eta = 0.8`
+  read +8.14 dB as "squeezed" at 1 MHz with `kappa_hz = 1e7`); a
+  negative dark floor lowered the noise; a NaN frequency gave NaN. All
+  are refused. `parametric_spectra_model` and `molecule_spectra_model`
+  refuse a linewidth that is not positive. The fit and the planner use
+  the unchecked path internally and give the same numbers as before.
+  Tests: `test_noise_spectrum_db_refuses_a_negative_linewidth_gain_or_floor`,
+  `test_spectra_models_refuse_a_negative_linewidth`,
+  `test_planner_with_a_dark_floor_still_works` (a check of a call that
+  was already right).
+- `output_quadrature_variance`, `output_covariance_xxpp` and
+  `output_variance_ports` returned NaN for a NaN or infinite analysis
+  frequency, a NaN angle or a NaN thermal occupation, without an error.
+  They now refuse; `optimal_quadrature` and the band functions refuse a
+  non-finite frequency with a clear message. Test:
+  `test_spectra_refuse_nan_frequency_angle_and_occupation`.
+- `phase_noise_variance` accepted a negative variance and returned a
+  negative one (`(-0.1, 2.0, 0.1)` gave -0.079), and a NaN offset;
+  `detected_variance` let a NaN variance through. Test:
+  `test_phase_noise_variance_refuses_negative_variances_and_nan`.
+- `thermal_occupation` (NaN frequency or temperature),
+  `threshold_power` (NaN detuning) and `intracavity_photons` (NaN
+  intensity) returned NaN instead of an error;
+  `thermal_occupation` also refuses an infinite frequency or
+  temperature now. Test: `test_unit_helpers_refuse_nan`.
+
+### Not included
+
+- Converting the parametric gain into a pump power in
+  `gain_for_squeezing`: it depends on the device (for a Kerr comb, on
+  the detuning and the comb state), not on numbers the package has.
+- A worst-case bound on the cost of the band search: the faster search
+  is exact and much quicker on the bands tried, but when many curves
+  share the top of the band few candidates can be ruled out, and the
+  cost can still grow with the cube of the number of frequencies.
+- A correction for analyzer traces that are not pure Gaussian noise
+  (a laser tone or a pickup line in the trace) when averaged in dB:
+  such a trace reads low by an amount that depends on the signal, which
+  the package cannot know.
+- The other open limits of earlier versions (see the README): material
+  constants, a whole comb above threshold beyond one or two modes, a
+  pump that changes within one round trip, the purity from one measured
+  pair, a calibration error that differs between traces or with
+  frequency, and transmission scans bent by heating or with a second
+  light path. Each needs data or a model the package does not have.
+
+### Checks (tests)
+
+- `optimal_band_angle` on the port of a detuned molecule against a
+  721-angle scan refined by a bounded minimizer on the port variances
+  (relative 1e-9; measured 9e-16), each frequency's own optimum against
+  a bounded minimization (measured 4e-16), exact equality with
+  `optimal_band_quadrature` for a single-ring variance, and agreement
+  through a molecule with `J = 0` (angle measured 3e-15, variances
+  5e-15).
+- `gain_for_squeezing` with a detuning against the output noise written
+  out in real quadratures (a 2 x 2 calculation independent of the
+  package's complex form): target measured 3e-15 dB, antisqueezing
+  4e-15 dB, best value 9e-14 dB; a 4000-point scan of the gain; the
+  threshold `sqrt(1 + delta^2)`; the purity of the lossless output
+  (`V_min V_max = 1/4`, measured 7e-16), which makes the antisqueezing
+  at the target and the best value with jitter independent of the
+  detuning (measured 4e-15 dB); `delta = 1e-6` against `delta = 0`
+  (relative 7e-13).
+- The log-averaging bias against a numerical integral (measured
+  relative 4e-15) and seeded simulations of log-averaged Gaussian
+  noise with 4 and 4000 readings per value (results within 1.3 of their
+  error bars of the truth).
+- The faster search against the 0.18 code, bit for bit.
+- Each fix above has a test that fails on 0.18.0.
+- Results: 326 passed and 5 skipped (the QuTiP tests) on Python 3.13
+  with NumPy 2.5.5 and SciPy 1.18.1, and on Python 3.9 with NumPy 2.0.2
+  and SciPy 1.13.1; 331 passed on Python 3.10 with the oldest pinned
+  versions (NumPy 1.22.0, SciPy 1.10.0, QuTiP 4.7.0). All 30 README
+  examples rerun in both the current and the oldest environment print
+  exactly the output shown.
+
 ## 0.18.0 (2026-11-10)
 
 The escape efficiency and the coupling regime from the phase of a
@@ -585,7 +733,7 @@ molecule's ports, and input checks that close silent wrong answers.
   vacuum units, and a first-order standard error from the sweep
   scatter.
 
-### Behaviour changes
+### Behavior changes
 
 - `output_variance_ports` now uses the stability test of
   `output_quadrature_variance`: a largest eigenvalue real part within
