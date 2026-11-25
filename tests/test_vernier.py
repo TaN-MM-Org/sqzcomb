@@ -100,7 +100,7 @@ def test_pairing_and_window():
         assert k == int(np.argmin(np.abs(fsr * modes - nu_b[j])) + modes[0])
         assert d == pytest.approx(k * fsr - nu_b[j])
         assert abs(d) <= fsr / 2
-    # the Vernier walk-off: detunings grow away from the centre
+    # the Vernier walk-off: detunings grow away from the center
     assert np.abs(aux["aux_delta"]).max() > 100
     _, _, _, aux_w = vernier_molecule_fluctuation_matrix(
         psi0, ALPHA, 0.9, 1.4, fsr, nu_b, (D2,), modes=modes, window=50)
