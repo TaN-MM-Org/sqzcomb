@@ -67,8 +67,9 @@ import math
 import numpy as np
 
 from .linearize import fluctuation_matrix
-from .spectra import (_bath_diagonal, _check_damping,
-                      _check_spectra_stability, _port_indices,
+from .spectra import (_bath_diagonal, _check_damping, _check_finite,
+                      _check_occupations, _check_spectra_stability,
+                      _port_indices,
                       _variance_from_rows)
 
 
@@ -137,7 +138,10 @@ def output_variance_ports(M, gammas, eta: float, port_mode, omega: float,
     read through `gammas=[1, 1]` gave 0.34 at omega = 0, an apparent
     -1.67 dB of squeezing from a passive pair of rings (0.5 with the
     right gammas), and a negative rate gave NaN.
+    Since 0.19 omega, phi and the thermal occupations must be finite
+    numbers (a NaN used to come back as a NaN variance).
     """
+    _check_finite(omega=omega, phi=phi)
     M, gammas, eta, ports, reads = _check_ports(
         M, gammas, eta, port_mode, mode_index, n_th_port, n_th_loss,
         allow_marginal)
@@ -153,8 +157,7 @@ def _check_ports(M, gammas, eta, port_mode, mode_index, n_th_port,
     n = gammas.size
     if not (0.0 <= eta <= 1.0):
         raise ValueError("eta must lie in [0, 1]")
-    if float(n_th_port) < 0.0 or float(n_th_loss) < 0.0:
-        raise ValueError("thermal occupations must be non-negative")
+    _check_occupations(n_th_port, n_th_loss)
     M = np.asarray(M, dtype=complex)
     if M.shape != (2 * n, 2 * n):
         raise ValueError("M and gammas disagree on the number of modes")

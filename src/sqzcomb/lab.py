@@ -51,7 +51,7 @@ import csv
 
 import numpy as np
 
-from .fitnoise import noise_spectrum_db
+from .fitnoise import _spectrum_db
 from .physical import RingSpec
 
 __all__ = ["plan_noise_measurement", "design_noise_frequencies",
@@ -122,9 +122,8 @@ def _rows(mu, eta, kappa_hz, f, sig, quadratures, names, dark=0.0):
     def model(x):
         out = []
         for q in quadratures:
-            out.append(noise_spectrum_db(x["mu"], x["eta"],
-                                         x["kappa_hz"], f, quadrature=q,
-                                         dark=x["dark"]))
+            out.append(_spectrum_db(x["mu"], x["eta"], x["kappa_hz"], f,
+                                    q, x["dark"]))
         return np.concatenate(out)
 
     w = np.concatenate([1.0 / sig] * len(quadratures))
@@ -440,9 +439,30 @@ def shot_noise_normalize(trace_dbm, shot_dbm, dark_dbm=None):
     `detected_squeezing_db(..., dark_noise=V_dark,
     dark_in_reference=True)` predicts; with subtraction it is the
     prediction with no dark noise at all. Both identities are exact
-    and checked in the tests. The function does not correct for an
-    analyzer that averaged in dB (log) mode, and it assumes every trace
-    was taken with the same resolution and video bandwidths.
+    and checked in the tests. It assumes every trace was taken with the
+    same resolution and video bandwidths.
+
+    Traces averaged in dB (log scale: a narrow video bandwidth or trace
+    averaging on a log display, instead of power or RMS averaging) need
+    no correction here, a point that 0.18 and earlier left open. Such a
+    value reads below the mean power of Gaussian noise, by
+    10 gamma / ln 10 = 2.507 dB when many readings are averaged
+    (gamma = 0.5772..., Euler's constant: the power of Gaussian noise
+    after the resolution filter is exponentially distributed, and
+    E[ln P] = ln E[P] - gamma for an exponential P). HP Application
+    Note 1303, "Spectrum Analyzer Measurements and Noise" (literature
+    number 5966-4008E, 1998), p. 8, gives the same 2.51 dB. Shot noise,
+    squeezed or antisqueezed vacuum, the electronic noise and their sum
+    are all Gaussian noise, so with the same analyzer settings every
+    trace reads low by the same factor (with few readings per value the
+    factor is different, but still the same for every trace), and both
+    db and dark_variance are ratios in which that factor cancels, the
+    dark subtraction included. The tests check this with simulated
+    log-averaged traces of 4 and of 4000 readings per value. It does
+    not hold for a trace that is not pure noise (a laser tone or a
+    pickup line reads low by a different amount), or for traces taken
+    with different averaging. Absolute levels in dBm from such an
+    analyzer do read low; only the ratios here are unaffected.
     """
     T, sT = _sweeps(trace_dbm, "trace_dbm")
     n = T.size
@@ -490,7 +510,7 @@ def _detected_pair(mu, eta, omega, theta_rms, dark_noise,
 def gain_for_squeezing(target_db: float, eta: float, omega: float = 0.0,
                        theta_rms: float = 0.0, dark_noise: float = 0.0,
                        dark_in_reference: bool = False,
-                       mu_max: float = 1.0 - 1e-9) -> dict:
+                       mu_max=None, delta: float = 0.0) -> dict:
     """The smallest parametric gain that reaches a target squeezing.
 
     The planning question before a squeezing run: how hard must the
@@ -523,15 +543,39 @@ def gain_for_squeezing(target_db: float, eta: float, omega: float = 0.0,
     (and says what can be reached), and otherwise returns the smallest
     gain that reaches the target (root bracketed on (0, mu_best)).
 
-    mu_max : the largest gain considered (default just below the
-        threshold mu = 1). The linearized model itself fails close to
-        threshold (see `sqzcomb.kerrpo` and `sqzcomb.master`), so a
-        plan that needs mu within a few 1e-3 of 1 is optimistic.
+    mu_max : the largest gain considered (default None: just below the
+        threshold, 1 - 1e-9 without detuning, as before, and
+        (1 - 1e-9) sqrt(1 + delta^2) with one). The linearized model
+        itself fails close to threshold (see `sqzcomb.kerrpo` and
+        `sqzcomb.master`), so a plan that needs mu within a few 1e-3 of
+        threshold is optimistic.
+    delta (new in 0.19) : detuning of the squeezed mode from its
+        resonance, in units of kappa/2, the `delta` of
+        `single_mode_parametric(mu, delta)`. The threshold is then
+        mu = sqrt(1 + delta^2) (the drift matrix has the eigenvalues
+        -1 +/- sqrt(mu^2 - delta^2)), and the squeezed quadrature is no
+        longer at a fixed angle: the local oscillator is taken to sit
+        at the best angle for this analysis frequency and gain, and the
+        jitter to scatter it around that angle. The squeezed and
+        antisqueezed variances are those of `optimal_quadrature` (the
+        smallest and largest over the angle); there is no closed form,
+        so the best gain is found from a scan of about 260 gains refined
+        by a bounded search, and the answer by root finding between the
+        scan points around the first gain that reaches the target. A
+        large detuning moves the squeezing away from omega = 0, and then
+        the deepest value can come before threshold even without
+        jitter (for delta = 2 at omega = 0.5, at mu = 2.20 against the
+        threshold 2.24). With delta = 0 the function runs exactly as
+        before. The loss after
+        the port still enters only through eta: the output variance
+        minus the vacuum level is proportional to the escape efficiency,
+        and the best angle does not depend on it.
 
     Returns dict(mu, detected_db, anti_db (detected antisqueezing at
     mu), mu_best, best_db (the deepest reachable squeezing and the gain
     that gives it), best_at_limit (True when the best lies at mu_max,
-    i.e. it keeps improving toward threshold)).
+    i.e. it keeps improving toward threshold)), and with delta also
+    mu_threshold, sqrt(1 + delta^2).
     """
     from scipy.optimize import brentq, minimize_scalar
     from .detection import _check_dark, _check_eta
@@ -547,7 +591,13 @@ def gain_for_squeezing(target_db: float, eta: float, omega: float = 0.0,
     if not (np.isfinite(th) and th >= 0.0):
         raise ValueError("theta_rms must be finite and >= 0")
     dark = _check_dark(dark_noise)
-    mmax = float(mu_max)
+    dl = float(delta)
+    if not np.isfinite(dl):
+        raise ValueError("delta must be finite")
+    if dl != 0.0:
+        return _gain_detuned(t_db, eta, w, th, dark,
+                             bool(dark_in_reference), mu_max, dl)
+    mmax = 1.0 - 1e-9 if mu_max is None else float(mu_max)
     if not (0.0 < mmax < 1.0):
         raise ValueError("mu_max must lie in (0, 1): below threshold")
     v_t = 0.5 * 10.0 ** (t_db / 10.0)
@@ -587,3 +637,79 @@ def gain_for_squeezing(target_db: float, eta: float, omega: float = 0.0,
             "anti_db": float(10.0 * np.log10(v_a / 0.5)),
             "mu_best": float(mu_best), "best_db": best_db,
             "best_at_limit": bool(mu_best == mmax)}
+
+
+def _detuned_pair(mu, delta, eta, omega, theta_rms, dark, dark_in_reference):
+    """Detected squeezed and antisqueezed variances of the detuned
+    single-mode output read at its best angle (`optimal_quadrature`),
+    after jitter around that angle and dark noise."""
+    from .detection import detected_variance, phase_noise_variance
+    from .linearize import single_mode_parametric
+    from .spectra import optimal_quadrature
+    # mu is checked below the threshold sqrt(1 + delta^2), so the
+    # matrix is stable; within 1e-6 of it the growth rate is too small
+    # for the generic test, hence allow_marginal
+    r = optimal_quadrature(single_mode_parametric(mu, delta), eta, omega,
+                           0, 1, allow_marginal=True)
+    s = phase_noise_variance(r["v_min"], r["v_max"], theta_rms)
+    a = phase_noise_variance(r["v_max"], r["v_min"], theta_rms)
+    return (detected_variance(s, 1.0, dark, dark_in_reference),
+            detected_variance(a, 1.0, dark, dark_in_reference))
+
+
+def _gain_detuned(t_db, eta, w, th, dark, dark_in_reference, mu_max,
+                  delta):
+    """`gain_for_squeezing` with a detuning (new in 0.19): scan, then a
+    bounded search for the best gain and root finding for the answer."""
+    from scipy.optimize import brentq, minimize_scalar
+    mu_th = float(np.sqrt(1.0 + delta * delta))
+    mmax = (1.0 - 1e-9) * mu_th if mu_max is None else float(mu_max)
+    if not (0.0 < mmax < mu_th):
+        raise ValueError(f"mu_max must lie in (0, {mu_th:.6g}): below the "
+                         "threshold sqrt(1 + delta^2)")
+    v_t = 0.5 * 10.0 ** (t_db / 10.0)
+
+    def v_of(mu):
+        return _detuned_pair(mu, delta, eta, w, th, dark,
+                             dark_in_reference)[0]
+
+    # 200 even steps, then 60 steps that crowd toward mu_max on a log
+    # scale of the distance to threshold, where the variance changes
+    # fastest
+    gap = np.logspace(np.log10(0.2 * mu_th), np.log10(mu_th - mmax), 61)
+    grid = np.unique(np.concatenate([np.linspace(0.0, mmax, 201)[1:],
+                                     (mu_th - gap)[1:]]))
+    grid = grid[(grid > 0.0) & (grid <= mmax)]
+    vals = np.array([v_of(m) for m in grid])
+    k = int(np.argmin(vals))
+    lo = grid[k - 1] if k > 0 else 0.0
+    hi = grid[k + 1] if k + 1 < grid.size else grid[k]
+    mu_best, v_best = float(grid[k]), float(vals[k])
+    if hi > lo:
+        res = minimize_scalar(v_of, bounds=(lo, hi), method="bounded",
+                              options={"xatol": 1e-12})
+        if float(res.fun) < v_best:
+            mu_best, v_best = float(res.x), float(res.fun)
+    best_db = float(10.0 * np.log10(v_best / 0.5))
+    if not v_best <= v_t:
+        raise ValueError(
+            f"{t_db:g} dB cannot be reached: the deepest detected "
+            f"squeezing with this efficiency, frequency, detuning, jitter "
+            f"and dark noise is {best_db:.4g} dB (at mu = {mu_best:.6g})")
+    reach = np.flatnonzero((vals <= v_t) & (grid <= mu_best))
+    j = int(reach[0]) if reach.size else -1
+    m_hi = float(grid[j]) if j >= 0 else mu_best
+    m_lo = float(grid[j - 1]) if j > 0 else 0.0
+    if v_of(m_hi) == v_t:
+        mu = m_hi
+    else:
+        mu = brentq(lambda m: v_of(m) - v_t, m_lo, m_hi, xtol=1e-15,
+                    rtol=4.0 * np.finfo(float).eps)
+    v_s, v_a = _detuned_pair(mu, delta, eta, w, th, dark,
+                             dark_in_reference)
+    return {"mu": float(mu),
+            "detected_db": float(10.0 * np.log10(v_s / 0.5)),
+            "anti_db": float(10.0 * np.log10(v_a / 0.5)),
+            "mu_best": mu_best, "best_db": best_db,
+            "best_at_limit": bool(mu_best == mmax),
+            "mu_threshold": mu_th}

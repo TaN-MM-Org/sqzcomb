@@ -99,6 +99,31 @@ def noise_spectrum_db(mu: float, eta: float, kappa_hz: float, f_hz,
     if not isinstance(quadrature, str) or quadrature not in _QUADRATURE_PHI:
         raise ValueError(f"quadrature must be 'squeezed' or 'anti' "
                          f"(got {quadrature!r})")
+    # checked since 0.19: a negative kappa_hz gave the curve of +kappa_hz
+    # (the spectrum is even in the frequency), a negative mu swapped the
+    # two quadratures (mu = -0.5, eta = 0.8 read +8.14 dB as "squeezed"
+    # at f = kappa_hz / 10), and a negative dark floor lowered the noise
+    mu_f = float(mu)
+    if not (0.0 <= mu_f < 1.0):
+        raise ValueError(f"mu must lie in [0, 1) (got {mu_f:g}): the model "
+                         "is a real gain below threshold, squeezed at "
+                         "phi = pi/2")
+    _check_kappa_hz(kappa_hz)
+    d = float(dark)
+    if not (np.isfinite(d) and d >= 0.0):
+        raise ValueError("dark must be finite and >= 0 (a noise floor "
+                         "adds noise)")
+    f = np.atleast_1d(np.asarray(f_hz, dtype=float))
+    if not np.all(np.isfinite(f)):
+        raise ValueError("analysis frequencies must be finite")
+    return _spectrum_db(mu, eta, kappa_hz, f, quadrature, dark)
+
+
+def _spectrum_db(mu, eta, kappa_hz, f_hz, quadrature, dark):
+    """`noise_spectrum_db` without its 0.19 argument checks, for the fit
+    and the planner, which keep their parameters in range themselves
+    (the planner's central differences step a dark floor of 0 to -1e-12
+    and back)."""
     f = np.atleast_1d(np.asarray(f_hz, dtype=float))
     kappa = 2.0 * np.pi * float(kappa_hz)
     om = 4.0 * np.pi * f / kappa                 # units of kappa/2
@@ -107,6 +132,15 @@ def noise_spectrum_db(mu: float, eta: float, kappa_hz: float, f_hz,
     v = _single_mode_spectra(M, float(eta), om, (phi,))[0]
     v = v + float(dark)
     return 10.0 * np.log10(v / _VAC)
+
+
+def _check_kappa_hz(kappa_hz):
+    """A linewidth must be finite and positive (new in 0.19: the spectra
+    are even in the frequency, so a negative kappa_hz gave the curve of
+    its absolute value without an error)."""
+    k = float(kappa_hz)
+    if not (np.isfinite(k) and k > 0.0):
+        raise ValueError(f"kappa_hz must be finite and positive (got {k:g})")
 
 
 def _single_mode_spectra(M, eta, om, phis):
@@ -143,7 +177,7 @@ class NoiseFit:
         the true shot-noise level (without `calib_offset_db`).
     calib_offset_db : with `calib_sigma_db` (new in 0.15), the fitted
         common error of the shot-noise reference in dB: the data are
-        modelled as the curves above plus this offset. None otherwise.
+        modeled as the curves above plus this offset. None otherwise.
     """
 
     mu: float
@@ -285,8 +319,7 @@ def fit_noise_spectra(f_hz, sq_db=None, anti_db=None, sigma_db=None,
         mu, eta, kap, dark = unpack(p)
         r = []
         for kind, data in traces:
-            m = noise_spectrum_db(mu, eta, kap, f, quadrature=kind,
-                                  dark=dark)
+            m = _spectrum_db(mu, eta, kap, f, kind, dark)
             if calib:
                 m = m + p[-1]
             r.append(w * (m - data))
@@ -373,6 +406,7 @@ def parametric_spectra_model(detuned=False, jitter=False, dark=False):
         + (["theta_rms"] if jitter else []) + (["dark"] if dark else [])
 
     def model(p, f_hz):
+        _check_kappa_hz(p["kappa_hz"])
         om = 4.0 * np.pi * np.asarray(f_hz, dtype=float) / (
             2.0 * np.pi * float(p["kappa_hz"]))
         M = single_mode_parametric(float(p["mu"]),
@@ -422,6 +456,7 @@ def molecule_spectra_model(port: str = "aux",
                                  float(p.get("delta_a", 0.0)),
                                  float(p.get("delta_b", 0.0)),
                                  float(p["gamma"]))
+        _check_kappa_hz(p["kappa_hz"])
         om = 4.0 * np.pi * np.asarray(f_hz, dtype=float) / (
             2.0 * np.pi * float(p["kappa_hz"]))
         eta = float(p["eta"])

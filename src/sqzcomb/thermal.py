@@ -42,10 +42,12 @@ def thermal_occupation(frequency_hz, temperature_k):
     """
     f = np.asarray(frequency_hz, dtype=float)
     T = float(temperature_k)
-    if np.any(f <= 0.0):
-        raise ValueError("frequency must be positive")
-    if T < 0.0:
-        raise ValueError("temperature must be non-negative")
+    # written so that NaN fails too (new in 0.19: a NaN frequency or
+    # temperature gave NaN without an error)
+    if not np.all(f > 0.0) or not np.all(np.isfinite(f)):
+        raise ValueError("frequency must be positive and finite")
+    if not (T >= 0.0 and np.isfinite(T)):
+        raise ValueError("temperature must be non-negative and finite")
     if T == 0.0:
         out = np.zeros_like(f)
         return float(out) if np.isscalar(frequency_hz) else out

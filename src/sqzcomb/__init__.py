@@ -17,7 +17,8 @@ from .molecule import (molecule_fluctuation_matrix, molecule_threshold,
                        output_variance_ports, photonic_molecule,
                        ring_line_frequencies,
                        vernier_molecule_fluctuation_matrix)
-from .spectra import (optimal_band_quadrature, optimal_quadrature,
+from .spectra import (optimal_band_angle, optimal_band_quadrature,
+                      optimal_quadrature,
                       output_covariance_xxpp,
                       output_entanglement, output_entanglement_spectrum,
                       output_quadrature_variance, quadrature_extremes,
@@ -65,7 +66,7 @@ from .resonance import (fit_complex_transmission,
                         split_transmission, through_amplitude,
                         through_transmission)
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 __all__ = [
     "lle_evolve", "homogeneous_steady_states",
     "fluctuation_matrix", "single_mode_parametric",
@@ -116,4 +117,6 @@ __all__ = [
     "fit_squeezing_pairs", "fit_split_resonance", "split_transmission",
     # new in 0.18
     "through_amplitude", "fit_complex_transmission",
+    # new in 0.19
+    "optimal_band_angle",
 ]

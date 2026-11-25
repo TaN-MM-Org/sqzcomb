@@ -121,6 +121,9 @@ def threshold_power(spec: RingSpec, alpha: float = 1.0) -> float:
     rho [1 + (alpha - rho)^2] = F^2 has the root rho = 1 -- i.e.
     F_th^2 = 1 + (alpha - 1)^2, an identity of the cubic.  At
     alpha = 1 this is the minimum comb threshold F_th = 1."""
+    if not np.isfinite(float(alpha)):
+        # new in 0.19 (a NaN detuning gave a NaN power)
+        raise ValueError("alpha must be finite")
     F2 = 1.0 + (float(alpha) - 1.0) ** 2
     kap = spec.kappa
     return float(F2 * kap ** 3 * _HBAR * spec.omega_pump
@@ -158,8 +161,9 @@ def intracavity_photons(spec: RingSpec, rho) -> float:
     """Intracavity photon number N = rho kappa / (2 g0) for a
     normalized intensity rho = |psi|^2."""
     r = float(rho)
-    if r < 0.0:
-        raise ValueError("rho must be non-negative")
+    if not (r >= 0.0 and np.isfinite(r)):
+        # NaN refused since 0.19 (it passed the old r < 0 test)
+        raise ValueError("rho must be finite and non-negative")
     return float(r * spec.kappa / (2.0 * spec.g0))
 
 

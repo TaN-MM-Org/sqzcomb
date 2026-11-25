@@ -283,7 +283,12 @@ def output_quadrature_variance(M, eta: float, omega: float,
     `output_variance_ports`, which takes them as `gammas`. The same
     check applies to `output_covariance_xxpp`, `optimal_quadrature`,
     `optimal_band_quadrature` and the output-entanglement functions.
+
+    Since 0.19 omega, phi and the thermal occupations must be finite
+    numbers; a NaN used to come back as a NaN variance, without an
+    error.
     """
+    _check_finite(omega=omega, phi=phi)
     eta = _check_quadrature_inputs(M, eta, mode_index, n_modes,
                                    mode_index_b, n_th_port, n_th_loss,
                                    allow_marginal)
@@ -292,11 +297,27 @@ def output_quadrature_variance(M, eta: float, omega: float,
                         n_th_port, n_th_loss)
 
 
+def _check_finite(**values):
+    """Refuse a NaN or infinite scalar argument (new in 0.19: a NaN
+    frequency, angle or thermal occupation used to come back as a NaN
+    variance, and an infinite frequency as NaN, without an error)."""
+    for name, v in values.items():
+        if not np.isfinite(float(v)):
+            raise ValueError(f"{name} must be a finite number (got {v!r})")
+
+
+def _check_occupations(n_th_port, n_th_loss):
+    """Thermal occupations: finite and >= 0 (NaN refused since 0.19)."""
+    if not (np.isfinite(float(n_th_port)) and np.isfinite(float(n_th_loss))):
+        raise ValueError("thermal occupations must be finite")
+    if float(n_th_port) < 0.0 or float(n_th_loss) < 0.0:
+        raise ValueError("thermal occupations must be non-negative")
+
+
 def _check_quadrature_inputs(M, eta, mode_index, n_modes, mode_index_b,
                              n_th_port, n_th_loss, allow_marginal):
     """The input checks of `output_quadrature_variance`; returns eta."""
-    if float(n_th_port) < 0.0 or float(n_th_loss) < 0.0:
-        raise ValueError("thermal occupations must be non-negative")
+    _check_occupations(n_th_port, n_th_loss)
     eta = _check_eta_port(eta)
     _check_modes(M, n_modes, (mode_index, mode_index_b))
     if mode_index_b is not None and int(mode_index_b) == int(mode_index):
@@ -326,8 +347,8 @@ def output_covariance_xxpp(M, eta, omega, n_modes, n_th_port=0.0,
     coupling and omega, and in the omega -> infinity limit the output
     is the reflected input bath exactly.
     """
-    if float(n_th_port) < 0.0 or float(n_th_loss) < 0.0:
-        raise ValueError("thermal occupations must be non-negative")
+    _check_finite(omega=omega)
+    _check_occupations(n_th_port, n_th_loss)
     eta = _check_eta_port(eta)
     _check_modes(M, n_modes, ())
     _check_spectra_stability(M, allow_marginal)
@@ -515,6 +536,9 @@ def _angle_function(M, eta, ws, mode_index, n_modes, mode_index_b,
     frequencies ws and var_k(k, phi) the one at ws[k], each exactly what
     `output_quadrature_variance` returns, with the checks run and the
     resolvent built once per frequency."""
+    if not np.all(np.isfinite(ws)):
+        raise ValueError("omega must be finite (a NaN or infinite "
+                         "frequency has no output variance)")
     eta = _check_quadrature_inputs(M, eta, mode_index, n_modes,
                                    mode_index_b, n_th_port, n_th_loss,
                                    allow_marginal)
@@ -575,10 +599,14 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
         such curves is lowest either at the minimum of one of them or
         where two of them cross. Those angles are found in closed form
         (a crossing solves c0 + c1 cos t + c2 sin t = 0 for the
-        difference of two curves) and the best one is kept. The cost
-        grows as the cube of the number of frequencies (0.7 s for 400
-        on one test machine). Every frequency counts in the worst case,
-        whatever its weight.
+        difference of two curves) and the best one is kept. Every
+        frequency counts in the worst case, whatever its weight. There
+        are about n^2 such angles for n frequencies; since 0.19 most of
+        them are ruled out before the curves are evaluated there (see
+        `_minimax_angle`), with the same result as in 0.18. On a
+        shared test machine a call took 0.04 to 0.13 s for 400
+        frequencies (0.34 to 0.47 s in 0.18) and 0.13 to 0.50 s for
+        1000 (5 to 10 s in 0.18).
 
     Returns a dict:
         phi : the best fixed angle for the goal, in [0, pi);
@@ -599,28 +627,18 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
     chosen from the harmonics c0, c1, c2, which near threshold carry
     the rounding error described in `quadrature_extremes`.
 
-    For the photonic molecule's ports, the same answer comes from
-    ``quadrature_extremes(lambda p: np.average([output_variance_ports(
-    M, g, eta, port, w, phi=p) for w in omegas], weights=weights))``.
+    For the photonic molecule's ports, or any other variance given as a
+    function of the angle, `optimal_band_angle` (new in 0.19) does the
+    same for all three goals.
     """
-    if goal not in ("mean", "worst", "penalty"):
+    if goal not in _BAND_GOALS:
         raise ValueError(f"goal must be 'mean', 'worst' or 'penalty' "
                          f"(got {goal!r})")
     ws = np.asarray(omegas, dtype=float)
     if ws.ndim != 1 or ws.size == 0 or not np.all(np.isfinite(ws)):
         raise ValueError("omegas must be a non-empty 1-D array of finite "
                          "analysis frequencies")
-    if weights is None:
-        wt = np.ones(ws.size)
-    else:
-        wt = np.asarray(weights, dtype=float)
-        if wt.shape != ws.shape:
-            raise ValueError(f"weights must have one value per frequency "
-                             f"({ws.size}), got shape {wt.shape}")
-        if not np.all(np.isfinite(wt)) or np.any(wt < 0.0) \
-                or not np.sum(wt) > 0.0:
-            raise ValueError("weights must be finite, >= 0 and not all "
-                             "zero")
+    wt = _band_weights(weights, ws.size)
     var, var_k = _angle_function(M, eta, ws, mode_index, n_modes,
                                  mode_index_b, n_th_port, n_th_loss,
                                  allow_marginal)
@@ -631,7 +649,38 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
             cache[p] = var(p)
         return cache[p]
 
-    per = _extremes_per_frequency(cached, var_k, ws.size)
+    return _band_angle(cached, var_k, ws.size, wt, goal)
+
+
+_BAND_GOALS = ("mean", "worst", "penalty")
+
+
+def _band_weights(weights, n):
+    """Checked band weights: ones by default, else n finite values >= 0,
+    not all zero."""
+    if weights is None:
+        return np.ones(n)
+    wt = np.asarray(weights, dtype=float)
+    if wt.shape != (n,):
+        raise ValueError(f"weights must have one value per frequency "
+                         f"({n}), got shape {wt.shape}")
+    if not np.all(np.isfinite(wt)) or np.any(wt < 0.0) \
+            or not np.sum(wt) > 0.0:
+        raise ValueError("weights must be finite, >= 0 and not all "
+                         "zero")
+    return wt
+
+
+def _band_angle(cached, var_k, n, wt, goal):
+    """The common part of `optimal_band_quadrature` and
+    `optimal_band_angle`: cached(phi) is the array of variances over the
+    band at the angle phi, var_k(k, phi) the one at frequency k (both
+    already checked), wt the weights."""
+    # each frequency's own best angle, and the variance there (0.18
+    # also evaluated the largest variance at every frequency, which no
+    # result used; 0.19 skips it)
+    per = quadrature_extremes(cached)
+    v_opt = np.array([var_k(k, per["phi_min"][k]) for k in range(n)])
     if goal == "mean":
         # scalar: quadrature_extremes evaluates the band average at its
         # best angle (since 0.16), so v_band is the average of v below
@@ -643,7 +692,7 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
         # the same three evaluations quadrature_extremes used (cached)
         v0, v45, v90 = cached(0.0), cached(np.pi / 4), cached(np.pi / 2)
         c0 = 0.5 * (v0 + v90)
-        ref = np.full(ws.size, 0.5) if goal == "worst" else per["v_min"]
+        ref = np.full(n, 0.5) if goal == "worst" else v_opt
         if not np.all(ref > 0.0):
             raise ValueError("a per-frequency optimum is not positive; "
                              "the penalty is not defined")
@@ -651,13 +700,64 @@ def optimal_band_quadrature(M, eta, omegas, mode_index: int, n_modes: int,
         v_band = float(np.dot(wt, cached(phi)) / np.sum(wt))
     v = cached(phi)
     sq = squeezing_db(v)
-    pen = sq - squeezing_db(per["v_min"])
+    pen = sq - squeezing_db(v_opt)
     return {"phi": phi, "v_band": v_band,
             "squeezing_db_band": float(squeezing_db(v_band)),
             "v": v, "squeezing_db": sq,
-            "v_opt": per["v_min"], "phi_opt": per["phi_min"],
+            "v_opt": v_opt, "phi_opt": per["phi_min"],
             "penalty_db": pen, "worst_db": float(np.max(sq)),
             "worst_penalty_db": float(np.max(pen)), "goal": goal}
+
+
+def optimal_band_angle(variance_at, weights=None,
+                       goal: str = "mean") -> dict:
+    """The best fixed local-oscillator angle for a band, for any
+    variance given as a function of the angle (new in 0.19).
+
+    `optimal_band_quadrature` does this for a single ring. This function
+    takes the band as a function instead, so that it also covers the
+    photonic molecule's ports, added classical noise or any model of
+    your own:
+
+    variance_at : callable phi -> 1-D array of the variances (vacuum
+        0.5) at the frequencies of the band, read at the angle phi, for
+        example ``lambda p: np.array([output_variance_ports(M, g, eta,
+        1, w, phi=p) for w in omegas])``. Each element must have the
+        form c0 + c1 cos 2phi + c2 sin 2phi, as every quadrature
+        variance does; this is checked as in `quadrature_extremes`
+        (pass the variance, not dB).
+    weights, goal : as in `optimal_band_quadrature` ("mean", "worst" or
+        "penalty"), and solved the same way, exactly and without a scan.
+
+    Returns the dict of `optimal_band_quadrature`. Cost: the function is
+    called once per frequency (at that frequency's own best angle, for
+    v_opt) plus a few more times, so about n + 7 calls for n
+    frequencies. With a single-ring variance the result equals
+    `optimal_band_quadrature` (tested for exact equality).
+    """
+    if goal not in _BAND_GOALS:
+        raise ValueError(f"goal must be 'mean', 'worst' or 'penalty' "
+                         f"(got {goal!r})")
+    cache = {}
+
+    def cached(p):
+        p = float(p)
+        if p not in cache:
+            v = np.asarray(variance_at(p), dtype=float)
+            if v.ndim != 1 or v.size == 0:
+                raise ValueError("variance_at must return a non-empty 1-D "
+                                 "array, one variance per frequency")
+            if cache and v.shape != next(iter(cache.values())).shape:
+                raise ValueError("variance_at returned arrays of different "
+                                 "lengths for different angles")
+            if not np.all(np.isfinite(v)):
+                raise ValueError("variance_at returned a non-finite value")
+            cache[p] = v
+        return cache[p]
+
+    n = cached(0.0).size
+    wt = _band_weights(weights, n)
+    return _band_angle(cached, lambda k, p: cached(p)[k], n, wt, goal)
 
 
 def _minimax_angle(c0, c1, c2, ref):
@@ -669,29 +769,63 @@ def _minimax_angle(c0, c1, c2, ref):
     and sits at its own minimum (t = atan2(-c2, -c1)), or two curves
     are equal there: d0 + d1 cos t + d2 sin t = 0 for their difference,
     t = atan2(d2, d1) +/- arccos(-d0 / hypot(d1, d2)). Every such angle
-    is a candidate; the envelope is evaluated at all of them (in chunks)
-    and the lowest is returned. t = 0 is added so that the list is never
-    empty (all curves flat)."""
+    is a candidate, and the lowest value of the largest curve over all
+    of them is returned. t = 0 is added so that the list is never empty
+    (all curves flat).
+
+    Faster since 0.19, same answer. Most crossings lie well below the
+    largest curve, and they are ruled out cheaply first. The curves that
+    are the largest somewhere on a grid of 256 angles (usually a few)
+    are kept as a set S; the largest curve at any angle is at least the
+    largest member of S there, which costs |S| evaluations instead of
+    n. The largest curve is evaluated in full at t = 0 and at the n own
+    minima, and its lowest value there, U, bounds the answer from
+    above. A crossing whose bound from S is above U (with a margin of
+    1e-12 of the scale, far above rounding) cannot be the answer and is
+    dropped; only the others are evaluated in full, in their 0.18
+    order. Every candidate that reaches the lowest value is kept, so
+    the angle returned is the one 0.18 returned (tested against the
+    0.18 code, kept in the tests). In 0.18 every one of the roughly n^2
+    crossings was evaluated against all n curves (n^3 work)."""
     a0, a1, a2 = (np.asarray(c, dtype=float) / ref for c in (c0, c1, c2))
     k = a0.size
-    cands = [np.zeros(1)]
+
+    def curves(rows, t):
+        return a0[rows, None] + a1[rows, None] * np.cos(t)[None, :] \
+            + a2[rows, None] * np.sin(t)[None, :]
+
+    def envelope(t):
+        best_val, best_t = np.inf, 0.0
+        chunk = max(1, 2_000_000 // k)
+        for s0 in range(0, t.size, chunk):
+            tt = t[s0:s0 + chunk]
+            env = np.max(a0[:, None] + a1[:, None] * np.cos(tt)[None, :]
+                         + a2[:, None] * np.sin(tt)[None, :], axis=0)
+            m = int(np.argmin(env))
+            if env[m] < best_val:
+                best_val, best_t = float(env[m]), float(tt[m])
+        return best_val, best_t
+
     r = np.hypot(a1, a2)
-    cands.append(np.arctan2(-a2, -a1)[r > 0.0])
+    first = np.concatenate([np.zeros(1), np.arctan2(-a2, -a1)[r > 0.0]])
+    upper, _ = envelope(first)
     i, j = np.triu_indices(k, 1)
     d0, d1, d2 = a0[i] - a0[j], a1[i] - a1[j], a2[i] - a2[j]
     rr = np.hypot(d1, d2)
     ok = (rr > 0.0) & (np.abs(d0) <= rr)
     base = np.arctan2(d2[ok], d1[ok])
     off = np.arccos(np.clip(-d0[ok] / rr[ok], -1.0, 1.0))
-    cands += [base + off, base - off]
-    th = np.concatenate(cands)
-    best_val, best_t = np.inf, 0.0
-    chunk = max(1, 2_000_000 // k)
-    for s0 in range(0, th.size, chunk):
-        t = th[s0:s0 + chunk]
-        env = np.max(a0[:, None] + a1[:, None] * np.cos(t)[None, :]
-                     + a2[:, None] * np.sin(t)[None, :], axis=0)
-        m = int(np.argmin(env))
-        if env[m] < best_val:
-            best_val, best_t = float(env[m]), float(t[m])
+    grid = np.linspace(0.0, 2.0 * np.pi, 256, endpoint=False)
+    rows = np.unique(np.argmax(curves(np.arange(k), grid), axis=0))
+    margin = 1e-12 * (abs(upper) + float(np.max(np.abs(a0) + r)))
+    kept = [first]
+    chunk = max(1, 2_000_000 // rows.size)
+    for t in (base + off, base - off):
+        keep = np.empty(t.size, dtype=bool)
+        for s0 in range(0, t.size, chunk):
+            tt = t[s0:s0 + chunk]
+            keep[s0:s0 + chunk] = \
+                np.max(curves(rows, tt), axis=0) <= upper + margin
+        kept.append(t[keep])
+    _, best_t = envelope(np.concatenate(kept))
     return float(np.mod(0.5 * best_t, np.pi))

@@ -9,9 +9,9 @@ quiet resonator and pump. Real devices add classical noise on top:
 * the pump laser has intensity noise and phase (frequency) noise.
 
 How large these are is material and laser physics with its own
-modelling choices, so the package still ships no material numbers. What
+modeling choices, so the package still ships no material numbers. What
 it does now do, exactly, is carry any such noise -- given as a power
-spectral density you measured or modelled, with its source -- through
+spectral density you measured or modeled, with its source -- through
 the same linearized resonator and input-output relations as the
 quantum noise, and add it to the detected spectrum. That is the part
 that is the same for every platform.
@@ -44,7 +44,7 @@ vectors b of the common cases:
 * noise of a parametric gain mu (the pump of `single_mode_parametric`
   and of `sqzcomb.kerrpo`), mu -> mu (1 + eps): b = (mu c*, mu* c);
   mu -> mu e^{i eps}: b = (i mu c*, -i mu* c) -- `gain_noise_drive`.
-  Around a vacuum-centred state (c = 0) such noise does nothing to
+  Around a vacuum-centered state (c = 0) such noise does nothing to
   first order, as it should: it only matters above threshold.
 
 Phase noise is always relative to the reference of the detection.

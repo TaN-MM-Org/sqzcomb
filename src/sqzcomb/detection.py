@@ -116,6 +116,9 @@ def detected_variance(variance, efficiency=1.0, dark_noise=0.0,
     V = np.asarray(variance, dtype=float)
     if np.any(V < 0.0):
         raise ValueError("a quadrature variance cannot be negative")
+    if not np.all(np.isfinite(V)):
+        # new in 0.19 (a NaN used to pass the check above)
+        raise ValueError("a quadrature variance must be finite")
     out = eta * V + (1.0 - eta) * VACUUM_VARIANCE + dark
     if dark_in_reference:
         out = VACUUM_VARIANCE * out / (VACUUM_VARIANCE + dark)
@@ -338,6 +341,14 @@ def phase_noise_variance(v_squeezed, v_antisqueezed, theta_rms,
     t0 = float(static_offset)
     if s < 0.0 or not np.isfinite(s):
         raise ValueError("theta_rms must be finite and >= 0")
+    # checked since 0.19: a negative variance came back as a negative
+    # "detected" variance, and a NaN offset as NaN, without an error
+    if not np.isfinite(t0):
+        raise ValueError("static_offset must be finite")
+    for name, v in (("v_squeezed", vs), ("v_antisqueezed", va)):
+        if not (np.all(np.isfinite(v)) and np.all(v >= 0.0)):
+            raise ValueError(f"{name} must be finite and >= 0 (a quadrature "
+                             "variance cannot be negative)")
     mean_cos2 = np.cos(2.0 * t0) * np.exp(-2.0 * s * s)
     c2 = 0.5 * (1.0 + mean_cos2)          # <cos^2>
     out = vs * c2 + va * (1.0 - c2)

@@ -73,7 +73,7 @@ def _check(mu, delta, chi, allow_zero=False):
 
 def kerr_parametric_drift(alpha, mu, delta, chi):
     """Doubled 2x2 drift matrix of the fluctuations around the classical
-    state `alpha` (use alpha = 0 for the vacuum-centred state):
+    state `alpha` (use alpha = 0 for the vacuum-centered state):
 
         [[-1 + i (delta + 2 chi |alpha|^2),  mu + i chi alpha^2],
          [conj(...),                         conj(...)]]
@@ -96,7 +96,7 @@ def kerr_parametric_states(mu, delta, chi):
     alpha (complex amplitude, photon-number units), n (= |alpha|^2),
     stable (bool: every drift eigenvalue has negative real part),
     growth (largest real part of the drift eigenvalues) and drift (the
-    2x2 matrix of `kerr_parametric_drift`). The vacuum-centred state
+    2x2 matrix of `kerr_parametric_drift`). The vacuum-centered state
     alpha = 0 is always listed first; bright states come in +/- pairs.
     The residual of the classical equation at each returned state is
     checked to 1e-9 relative, or the function raises.
